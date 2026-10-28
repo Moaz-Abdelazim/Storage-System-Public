@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>إدارة المواقع | مخزني</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="js/theme-init.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+</head>
+<body>
+<noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
+
+<div id="shell" data-active="locations" data-title="إدارة المواقع">
+  <div x-data="locations" class="space-y-5">
+
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div><h1 class="text-2xl font-bold">المخازن والمواقع</h1><p class="mt-1 text-sm text-muted">هيكل المخازن: المخزن ← الدور ← الغرفة ← الرف... بعدد مستويات مفتوح</p></div>
+      <button type="button" class="btn btn-primary" @click="openWarehouse()"><i class="fa-solid fa-plus"></i>إضافة مخزن</button>
+    </div>
+
+    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <template x-for="k in kpis" :key="k.label">
+        <div class="card card-pad flex items-center gap-4"><span class="grid h-12 w-12 place-items-center rounded-2xl text-xl" :class="k.tone"><i class="fa-solid" :class="k.icon"></i></span>
+          <div><div class="kpi-label" x-text="k.label"></div><div class="text-2xl font-bold tabular-nums" x-text="k.value"></div></div></div>
+      </template>
+    </div>
+
+    <div class="grid gap-5 xl:grid-cols-12">
+      <!-- الشجرة -->
+      <section class="card xl:col-span-7">
+        <div class="flex flex-wrap items-center gap-2 border-b border-line p-4">
+          <div class="relative min-w-[200px] flex-1"><i class="fa-solid fa-magnifying-glass pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-sm text-muted"></i>
+            <input type="search" class="input ps-10" placeholder="ابحث بالاسم أو الكود..." x-model="search" @input.debounce.350ms="runSearch()" aria-label="بحث في المواقع"></div>
+          <button type="button" class="btn btn-outline btn-sm" @click="expandAll(true)"><i class="fa-solid fa-angles-down"></i>فتح المخازن</button>
+          <button type="button" class="btn btn-outline btn-sm" @click="expandAll(false)"><i class="fa-solid fa-angles-up"></i>طي الكل</button>
+        </div>
+
+        <div class="p-2">
+          <template x-if="loading"><div class="space-y-2 p-2"><template x-for="i in 6"><div class="skeleton h-11"></div></template></div></template>
+
+          <!-- وضع البحث: نتايج من السيرفر (حد أقصى) -->
+          <div x-show="!loading && search.trim()" x-cloak>
+            <div class="space-y-2 p-2" x-show="searching"><template x-for="i in 4"><div class="skeleton h-11"></div></template></div>
+            <ul class="space-y-0.5" x-show="!searching">
+              <template x-for="n in results" :key="n.kind + n.id">
+                <li><button type="button" class="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-start transition hover:bg-soft" :class="isSelected(n) && 'bg-brand-500/10'" @click="select(n)">
+                  <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-sm" :class="iconTone(n)"><i class="fa-solid" :class="iconOf(n)"></i></span>
+                  <span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium" x-text="n.name"></span><span class="block truncate text-xs text-muted" x-text="(n.path || []).join(' › ')"></span></span>
+                  <span class="code-chip shrink-0" x-text="n.full_code"></span></button></li>
+              </template>
+            </ul>
+            <p class="px-4 py-3 text-center text-xs text-muted" x-show="!searching && resultsTruncated">النتايج محدودة — ضيّق البحث لعرض المزيد.</p>
+            <div class="empty" x-show="!searching && !results.length">مفيش نتائج للبحث</div>
+          </div>
+
+          <!-- الشجرة: الأبناء بيتحمّلوا لما تفتح الفرع -->
+          <ul x-show="!loading && !search.trim()" class="space-y-0.5" role="tree">
+            <template x-for="r in visibleRows" :key="r.key">
+              <li role="treeitem">
+                <template x-if="r.type === 'more'">
+                  <div :style="{ paddingInlineStart: (r.depth * 22 + 40) + 'px' }" class="py-1.5 pe-2">
+                    <button type="button" class="btn btn-outline btn-sm" @click="loadChildren(r.parent, true)" :disabled="r.parent._loading"><i class="fa-solid" :class="r.parent._loading ? 'fa-spinner animate-spin' : 'fa-ellipsis'"></i>عرض المزيد (<span x-text="r.parent._total - r.parent._kids.length"></span>)</button>
+                  </div>
+                </template>
+                <template x-if="r.type === 'node'">
+                  <div class="group flex items-center gap-2 rounded-xl py-1.5 pe-2 transition hover:bg-soft" :class="isSelected(r.node) && 'bg-brand-500/10 hover:bg-brand-500/10'" :style="{ paddingInlineStart: (r.depth * 22 + 8) + 'px' }">
+                    <button type="button" class="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-muted hover:bg-line/60" :class="!r.node.children_count && 'invisible'" @click="toggle(r.node)" :aria-label="r.node._open ? 'طي' : 'فتح'">
+                      <i class="fa-solid text-[10px]" :class="r.node._loading ? 'fa-spinner animate-spin' : 'fa-chevron-down transition-transform ' + (!r.node._open ? 'rotate-90' : '')"></i></button>
+                    <button type="button" class="flex min-w-0 flex-1 items-center gap-3 text-start" @click="select(r.node)">
+                      <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-sm" :class="iconTone(r.node)"><i class="fa-solid" :class="iconOf(r.node)"></i></span>
+                      <span class="min-w-0"><span class="block truncate text-sm font-medium" x-text="r.node.name"></span>
+                        <span class="flex items-center gap-1.5 text-xs text-muted"><span class="code-chip" x-text="r.node.full_code"></span><span x-show="r.node.type" x-text="r.node.type"></span></span></span>
+                    </button>
+                    <span class="badge badge-ok hidden sm:inline-flex" x-show="isDefault(r.node)" x-cloak title="مكان الاستلام الافتراضي"><i class="fa-solid fa-inbox"></i>استلام</span>
+                    <span class="hidden text-end text-xs sm:block"><span class="block font-bold tabular-nums" x-text="r.node.quantity != null ? num(r.node.quantity) : ''"></span><span class="text-muted" x-text="r.node.products_count != null ? num(r.node.products_count) + ' صنف' : ''"></span></span>
+                  </div>
+                </template>
+              </li>
+            </template>
+          </ul>
+          <div class="empty" x-show="!loading && !error && !search.trim() && !tree.length" x-cloak><i class="fa-solid fa-warehouse mb-3 text-4xl opacity-40"></i>لسه مفيش مخازن. ابدأ بإضافة مخزن.</div>
+          <div class="empty" x-show="error" x-cloak><p class="mb-3 text-red-500" x-text="error"></p><button type="button" class="btn btn-outline btn-sm" @click="load()">إعادة المحاولة</button></div>
+        </div>
+      </section>
+
+      <!-- التفاصيل -->
+      <aside class="xl:col-span-5">
+        <section class="card card-pad xl:sticky xl:top-24" x-show="selected" x-cloak>
+          <template x-if="selected">
+            <div>
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0"><div class="text-xs text-muted" x-text="selected.kind === 'warehouse' ? 'مخزن' : (selected.type || 'موقع')"></div>
+                  <h2 class="truncate text-xl font-bold" x-text="selected.name"></h2>
+                  <div class="mt-1 flex flex-wrap items-center gap-2"><loc-code :code="selected.full_code"></loc-code>
+                    <span class="badge badge-ok" x-show="isDefault(selected)"><i class="fa-solid fa-inbox"></i>مكان الاستلام الافتراضي</span></div></div>
+                <button type="button" class="btn btn-ghost btn-icon btn-sm" @click="selected = null" aria-label="إغلاق"><i class="fa-solid fa-xmark"></i></button>
+              </div>
+              <div class="mt-4 grid grid-cols-2 gap-3 text-center">
+                <div class="rounded-xl bg-soft p-3"><div class="kpi-label">إجمالي الكمية</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="num(selected.quantity)"></div></div>
+                <div class="rounded-xl bg-soft p-3"><div class="kpi-label">عدد الأصناف</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="num(selected.products_count)"></div></div>
+              </div>
+
+              <div class="mt-4 flex flex-wrap gap-2">
+                <button type="button" class="btn btn-primary btn-sm" @click="openLocation(null, selected)"><i class="fa-solid fa-plus"></i>إضافة موقع فرعي</button>
+                <button type="button" class="btn btn-outline btn-sm" @click="selected.kind === 'warehouse' ? openWarehouse(selected) : openLocation(selected)"><i class="fa-solid fa-pen"></i>تعديل</button>
+                <template x-if="selected.kind === 'location' && selected.is_leaf"><button type="button" class="btn btn-outline btn-sm" @click="setDefault(selected)"><i class="fa-solid fa-inbox"></i><span x-text="selected.is_default_receiving ? 'إلغاء كمكان استلام' : 'تعيين كمكان استلام'"></span></button></template>
+                <template x-if="admin"><button type="button" class="btn btn-outline btn-sm text-red-600" @click="remove(selected)"><i class="fa-solid fa-trash-can"></i>حذف</button></template>
+              </div>
+
+              <div class="mb-2 mt-6 flex items-center justify-between gap-2"><h3 class="text-sm font-bold">المنتجات الموجودة هنا</h3>
+                <input type="search" class="input h-8 w-36 text-[12px]" placeholder="بحث..." x-model="det.search" @input.debounce.350ms="loadProducts(selected, 1)"></div>
+              <div x-show="det.loading" class="space-y-2"><div class="skeleton h-9"></div><div class="skeleton h-9"></div></div>
+              <ul class="divide-y divide-line" x-show="!det.loading">
+                <template x-for="p in det.items" :key="p.product_id">
+                  <li class="flex items-center justify-between gap-3 py-2.5 text-sm">
+                    <div class="min-w-0"><div class="truncate font-medium" x-text="p.name"></div>
+                      <div class="mt-0.5 flex flex-wrap items-center gap-1 text-xs text-muted"><span x-text="p.sku || ''"></span><template x-for="l in p.location_items.slice(0, 2)" :key="l.full_code"><loc-code :code="l.full_code"></loc-code></template><span x-show="p.location_items.length > 2" x-text="'+' + (p.location_items.length - 2)"></span></div></div>
+                    <span class="shrink-0 font-bold tabular-nums"><span x-text="num(p.quantity)"></span> <span class="text-xs font-normal text-muted" x-text="p.unit"></span></span>
+                  </li>
+                </template>
+              </ul>
+              <p class="empty !py-8" x-show="!det.loading && !det.items.length">مفيش بضاعة في المكان ده.</p>
+              <ui-pager :page="det.page" :pages="det.total_pages" :total="det.total" :size="det.page_size" @go="loadProducts(selected, $event.detail)"></ui-pager>
+            </div>
+          </template>
+        </section>
+        <section class="card empty hidden xl:grid" x-show="!selected"><i class="fa-regular fa-hand-pointer mb-3 text-3xl opacity-40"></i>اختار مخزن أو موقع من الشجرة لعرض تفاصيله.</section>
+      </aside>
+    </div>
+
+    <!-- نافذة مخزن -->
+    <div x-show="wh.open" x-cloak x-transition.opacity class="modal" role="dialog" aria-modal="true" @keydown.escape.window="wh.open = false">
+      <div class="modal-backdrop" @click="wh.open = false"></div>
+      <form class="modal-panel max-w-md" @submit.prevent="saveWarehouse()" novalidate>
+        <div class="modal-head"><h2 class="text-lg font-bold" x-text="wh.id ? 'تعديل المخزن' : 'إضافة مخزن'"></h2><button type="button" class="btn btn-ghost btn-icon btn-sm" @click="wh.open = false" aria-label="إغلاق"><i class="fa-solid fa-xmark"></i></button></div>
+        <div class="modal-body space-y-4">
+          <div><label class="label">اسم المخزن *</label><input type="text" class="input" x-model.trim="wh.name" maxlength="100" placeholder="مثال: المخزن الرئيسي"></div>
+          <div><label class="label">الكود *</label><input type="text" class="input uppercase" dir="ltr" x-model.trim="wh.code" maxlength="30" placeholder="W1"><p class="mt-1 text-xs text-muted">الكود بيظهر في كل عناوين التخزين (مثال: W1-F3-R5).</p></div>
+          <p class="field-err" x-show="wh.error" x-text="wh.error"></p>
+        </div>
+        <div class="modal-foot"><button type="button" class="btn btn-outline" @click="wh.open = false">إلغاء</button><button type="submit" class="btn btn-primary" :disabled="wh.saving"><i class="fa-solid fa-spinner animate-spin" x-show="wh.saving"></i>حفظ</button></div>
+      </form>
+    </div>
+
+    <!-- نافذة موقع -->
+    <div x-show="lc.open" x-cloak x-transition.opacity class="modal" role="dialog" aria-modal="true" @keydown.escape.window="lc.open = false">
+      <div class="modal-backdrop" @click="lc.open = false"></div>
+      <form class="modal-panel max-w-md" @submit.prevent="saveLocation()" novalidate>
+        <div class="modal-head"><div><h2 class="text-lg font-bold" x-text="lc.id ? 'تعديل الموقع' : 'إضافة موقع فرعي'"></h2><p class="text-xs text-muted" x-show="!lc.id">تحت: <span class="code-chip" x-text="lc.parentCode"></span></p></div>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" @click="lc.open = false" aria-label="إغلاق"><i class="fa-solid fa-xmark"></i></button></div>
+        <div class="modal-body space-y-4">
+          <div><label class="label">الاسم *</label><input type="text" class="input" x-model.trim="lc.name" maxlength="100" placeholder="مثال: الدور الثالث"></div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="label">الكود *</label><input type="text" class="input uppercase" dir="ltr" x-model.trim="lc.code" maxlength="30" placeholder="F3"></div>
+            <div><label class="label">النوع</label><input type="text" class="input" x-model.trim="lc.type" list="loc-types" maxlength="50" placeholder="اختياري"><datalist id="loc-types"><option value="دور"><option value="غرفة"><option value="ممر"><option value="رف"><option value="صف"><option value="درج"><option value="صندوق"></datalist></div>
+          </div>
+          <p class="field-err" x-show="lc.error" x-text="lc.error"></p>
+        </div>
+        <div class="modal-foot"><button type="button" class="btn btn-outline" @click="lc.open = false">إلغاء</button><button type="submit" class="btn btn-primary" :disabled="lc.saving"><i class="fa-solid fa-spinner animate-spin" x-show="lc.saving"></i>حفظ</button></div>
+      </form>
+    </div>
+
+  </div>
+</div>
+
+<script type="module" src="js/layout.js"></script>
+<script type="module" src="js/locations.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
+</body>
+</html>

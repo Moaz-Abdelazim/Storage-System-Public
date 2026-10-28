@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>المستخدمين | مخزني</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="js/theme-init.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+</head>
+<body>
+<noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
+
+<div id="shell" data-active="users" data-title="المستخدمين" data-admin-only>
+  <div x-data="users" class="space-y-5">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div><h1 class="text-2xl font-bold">المستخدمين</h1><p class="mt-1 text-sm text-muted">إدارة حسابات الفريق وصلاحياتهم</p></div>
+      <button type="button" class="btn btn-primary" @click="openForm()"><i class="fa-solid fa-user-plus"></i>مستخدم جديد</button>
+    </div>
+
+    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <template x-for="c in cards" :key="c.key">
+        <button type="button" class="card card-pad flex items-center gap-4 text-start transition hover:-translate-y-0.5 hover:shadow-pop" :class="isActive(c) && 'ring-2 ring-brand-500'" @click="setFilter(c)" :aria-pressed="isActive(c)">
+          <span class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl text-xl" :class="c.tone"><i class="fa-solid" :class="c.icon"></i></span>
+          <span class="min-w-0"><span class="kpi-label block" x-text="c.label"></span>
+            <span class="text-2xl font-bold tabular-nums" x-text="stats ? c.value(stats) : '—'"></span></span>
+        </button>
+      </template>
+    </div>
+
+    <div class="card card-pad flex flex-wrap items-center gap-3">
+      <div class="relative min-w-[220px] flex-1"><i class="fa-solid fa-magnifying-glass pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-sm text-muted"></i><input type="search" class="input ps-10" placeholder="اسم المستخدم أو الاسم الكامل..." x-model="f.search" @input.debounce.350ms="apply()" aria-label="بحث"></div>
+      <span class="badge badge-info" x-show="f.role || f.status" x-cloak><span x-text="filterLabel"></span><button type="button" class="ms-1" @click="clearFilter()" aria-label="إلغاء الفلتر"><i class="fa-solid fa-xmark"></i></button></span>
+    </div>
+
+    <section class="card">
+      <div class="overflow-x-auto p-3">
+        <table class="tbl">
+          <thead><tr><th>المستخدم</th><th>الصلاحية</th><th>الحالة</th><th>تاريخ الإنشاء</th><th class="w-1"></th></tr></thead>
+          <tbody>
+            <template x-if="loading && !rows.length"><template x-for="i in 5"><tr><td colspan="5"><div class="skeleton h-9"></div></td></tr></template></template>
+            <template x-for="u in rows" :key="u.id">
+              <tr>
+                <td><div class="flex items-center gap-3"><span class="grid h-9 w-9 place-items-center rounded-full bg-brand-500/15 text-sm font-bold text-brand-700 dark:text-brand-300" x-text="(u.full_name || u.username).charAt(0).toUpperCase()"></span>
+                  <div><div class="font-medium" x-text="u.full_name || u.username"></div><div class="text-xs text-muted" dir="ltr" x-text="'@' + u.username"></div></div>
+                  <span class="badge badge-info" x-show="u.username === me">أنت</span></div></td>
+                <td><span class="badge" :class="u.role === 'admin' ? 'bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'badge-mute'" x-text="u.role === 'admin' ? 'مدير النظام' : 'موظف مخازن'"></span></td>
+                <td><span class="badge" :class="u.is_active ? 'badge-ok' : 'badge-bad'" x-text="u.is_active ? 'نشط' : 'موقوف'"></span></td>
+                <td class="text-muted" x-text="u.created_at ? fmtDate(u.created_at) : '—'"></td>
+                <td><div class="flex items-center gap-0.5">
+                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تعديل" @click="openForm(u)"><i class="fa-solid fa-pen"></i></button>
+                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" :title="u.is_active ? 'إيقاف' : 'تفعيل'" @click="toggleActive(u)" :disabled="u.username === me"><i class="fa-solid" :class="u.is_active ? 'fa-toggle-on text-brand-500' : 'fa-toggle-off'"></i></button>
+                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8 text-red-500" title="حذف" @click="remove(u)" :disabled="u.username === me"><i class="fa-solid fa-trash-can"></i></button>
+                </div></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <div class="empty" x-show="!loading && !rows.length && !error" x-cloak><i class="fa-solid fa-user-group mb-3 text-4xl opacity-40"></i>مفيش مستخدمين مطابقين</div>
+        <div class="empty" x-show="error" x-cloak><p class="mb-3 text-red-500" x-text="error"></p><button type="button" class="btn btn-outline btn-sm" @click="load()">إعادة المحاولة</button></div>
+      </div>
+      <div class="border-t border-line px-4"><ui-pager :page="page" :pages="pages" :total="total" :size="size" @go="page = $event.detail; load()"></ui-pager></div>
+    </section>
+
+    <div x-show="form.open" x-cloak x-transition.opacity class="modal" role="dialog" aria-modal="true" @keydown.escape.window="form.open = false">
+      <div class="modal-backdrop" @click="form.open = false"></div>
+      <form class="modal-panel max-w-md" @submit.prevent="save()" novalidate autocomplete="off">
+        <div class="modal-head"><h2 class="text-lg font-bold" x-text="form.id ? 'تعديل المستخدم' : 'مستخدم جديد'"></h2><button type="button" class="btn btn-ghost btn-icon btn-sm" @click="form.open = false" aria-label="إغلاق"><i class="fa-solid fa-xmark"></i></button></div>
+        <div class="modal-body space-y-4">
+          <div><label class="label">الاسم الكامل</label><input type="text" class="input" x-model.trim="form.full_name" maxlength="100"></div>
+          <div><label class="label">اسم المستخدم *</label><input type="text" class="input" dir="ltr" x-model.trim="form.username" maxlength="50" autocomplete="off"></div>
+          <div><label class="label" x-text="form.id ? 'كلمة مرور جديدة (سيبها فاضية لو مش هتغيّر)' : 'كلمة المرور *'"></label>
+            <input type="password" class="input" x-model="form.password" autocomplete="new-password" placeholder="6 حروف على الأقل"><p class="mt-1 text-xs text-muted" x-show="form.id">تغيير كلمة المرور بيقفل كل جلسات المستخدم المفتوحة.</p></div>
+          <div><label class="label">الصلاحية</label>
+            <div class="seg w-full"><button type="button" class="seg-btn flex-1 justify-center" :class="form.role === 'staff' && 'seg-btn-on'" @click="form.role = 'staff'">موظف مخازن</button>
+              <button type="button" class="seg-btn flex-1 justify-center" :class="form.role === 'admin' && 'seg-btn-on'" @click="form.role = 'admin'">مدير النظام</button></div></div>
+          <p class="field-err" x-show="form.error" x-text="form.error"></p>
+        </div>
+        <div class="modal-foot"><button type="button" class="btn btn-outline" @click="form.open = false">إلغاء</button><button type="submit" class="btn btn-primary" :disabled="form.saving"><i class="fa-solid fa-spinner animate-spin" x-show="form.saving"></i>حفظ</button></div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/layout.js"></script>
+<script type="module" src="js/users.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
+</body>
+</html>

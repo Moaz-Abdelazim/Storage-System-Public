@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>الإعدادات | مخزني</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="js/theme-init.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+</head>
+<body>
+<noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
+
+<div id="shell" data-active="settings" data-title="الإعدادات">
+  <div x-data="settings" class="mx-auto max-w-4xl space-y-6">
+
+    <div><h1 class="text-2xl font-bold">الإعدادات</h1><p class="mt-1 text-sm text-muted">حسابك والمظهر واستيراد/تصدير البيانات</p></div>
+
+    <!-- الحساب -->
+    <section class="card card-pad">
+      <div class="flex items-center gap-4">
+        <span class="grid h-16 w-16 shrink-0 place-items-center rounded-full bg-brand-500 text-2xl font-bold text-white" x-text="user.name.charAt(0).toUpperCase()"></span>
+        <div class="min-w-0 space-y-1.5 text-start">
+          <div class="truncate text-lg font-bold" x-text="user.name"></div>
+          <div class="truncate text-right text-sm text-muted" dir="ltr" x-text="'@' + user.username"></div>
+          <span class="badge" :class="admin ? 'bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'badge-mute'" x-text="admin ? 'مدير النظام' : 'موظف مخازن'"></span>
+        </div>
+      </div>
+      <div class="mt-6 border-t border-line pt-5">
+        <h2 class="mb-3 text-sm font-bold">المظهر</h2>
+        <div class="seg"><template x-for="t in themes" :key="t.key"><button type="button" class="seg-btn" :class="theme === t.key && 'seg-btn-on'" @click="setTheme(t.key, $el)"><i class="fa-solid" :class="t.icon"></i><span x-text="t.label"></span></button></template></div>
+      </div>
+    </section>
+
+    <!-- بيانات الشركة (أدمن بس): بتظهر في الفواتير المطبوعة -->
+    <section class="card card-pad" x-show="admin" x-cloak>
+      <h2 class="mb-1 flex items-center gap-2 text-base font-bold"><i class="fa-solid fa-building text-brand-500"></i>بيانات الشركة</h2>
+      <p class="mb-4 text-sm text-muted">الاسم والتليفونات واللوجو بيظهروا في هيدر الفاتورة المطبوعة (اللوجو بيتطبع بألوانه).</p>
+      <form class="grid gap-4 sm:grid-cols-3" @submit.prevent="saveCompany()" novalidate>
+        <div class="sm:col-span-3"><label class="label">اسم الشركة</label><input type="text" class="input" maxlength="150" x-model.trim="company.name"></div>
+        <div><label class="label">رقم التليفون 1</label><input type="tel" class="input" dir="ltr" maxlength="30" x-model.trim="company.phone1"></div>
+        <div><label class="label">رقم التليفون 2</label><input type="tel" class="input" dir="ltr" maxlength="30" x-model.trim="company.phone2"></div>
+        <div class="flex items-end"><button type="submit" class="btn btn-primary" :disabled="company.saving"><i class="fa-solid fa-spinner animate-spin" x-show="company.saving"></i>حفظ البيانات</button></div>
+        <p class="field-err sm:col-span-3" x-show="company.error" x-text="company.error"></p>
+      </form>
+      <div class="mt-6 flex flex-wrap items-center gap-4 border-t border-line pt-5">
+        <div class="grid h-20 w-36 place-items-center overflow-hidden rounded-xl border border-line bg-soft">
+          <img :src="logoSrc" alt="لوجو الشركة" class="max-h-full max-w-full object-contain" x-show="company.has_logo" x-cloak>
+          <span class="text-xs text-muted" x-show="!company.has_logo">مفيش لوجو</span>
+        </div>
+        <div class="space-y-2">
+          <div class="flex flex-wrap gap-2">
+            <label class="btn btn-outline cursor-pointer" :class="company.logoBusy && 'opacity-60'"><i class="fa-solid fa-upload"></i>رفع لوجو
+              <input type="file" class="sr-only" accept="image/png,image/jpeg,image/webp" @change="uploadLogo($event.target.files[0]); $event.target.value = ''" :disabled="company.logoBusy"></label>
+            <button type="button" class="btn btn-ghost text-red-600" x-show="company.has_logo" x-cloak @click="removeLogo()" :disabled="company.logoBusy">مسح اللوجو</button>
+          </div>
+          <p class="text-xs text-muted">PNG أو JPEG أو WebP بحد أقصى 5 ميجا (الصور الكبيرة بتتصغّر تلقائيًا قبل الرفع).</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- تغيير كلمة المرور -->
+    <section class="card card-pad">
+      <h2 class="mb-4 flex items-center gap-2 text-base font-bold"><i class="fa-solid fa-key text-brand-500"></i>تغيير كلمة المرور</h2>
+      <form class="grid gap-4 sm:grid-cols-3" @submit.prevent="changePassword()" novalidate autocomplete="off">
+        <div><label class="label">الحالية</label><input type="password" class="input" x-model="pw.current" autocomplete="current-password"></div>
+        <div><label class="label">الجديدة</label><input type="password" class="input" x-model="pw.next" autocomplete="new-password" placeholder="8 حروف على الأقل"></div>
+        <div><label class="label">تأكيد الجديدة</label><input type="password" class="input" x-model="pw.confirm" autocomplete="new-password"></div>
+        <div class="flex items-center gap-3 sm:col-span-3"><button type="submit" class="btn btn-primary" :disabled="pw.saving"><i class="fa-solid fa-spinner animate-spin" x-show="pw.saving"></i>تغيير كلمة المرور</button>
+          <p class="field-err !mt-0" x-show="pw.error" x-text="pw.error"></p><p class="text-xs text-muted" x-show="!pw.error">بعد التغيير بيتقفل باقي جلساتك المفتوحة على أجهزة تانية.</p></div>
+      </form>
+    </section>
+
+    <!-- التصدير -->
+    <section class="card card-pad">
+      <h2 class="mb-1 flex items-center gap-2 text-base font-bold"><i class="fa-solid fa-file-export text-brand-500"></i>تصدير البيانات (Excel)</h2>
+      <p class="mb-4 text-sm text-muted">نزّل نسخة من بياناتك بصيغة Excel.</p>
+      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <template x-for="x in exports" :key="x.path">
+          <button type="button" class="flex items-center gap-3 rounded-xl border border-line p-4 text-start transition hover:border-brand-500/50 hover:bg-soft disabled:opacity-60" @click="exportFile(x)" :disabled="busy === x.path" x-show="!x.admin || admin">
+            <span class="grid h-11 w-11 place-items-center rounded-xl bg-green-600/10 text-green-700 dark:text-green-300"><i class="fa-solid" :class="busy === x.path ? 'fa-spinner animate-spin' : x.icon"></i></span>
+            <span><span class="block text-sm font-medium" x-text="x.label"></span><span class="text-xs text-muted" x-text="x.sub"></span></span>
+          </button>
+        </template>
+      </div>
+    </section>
+
+    <!-- الاستيراد -->
+    <section id="import" class="card card-pad scroll-mt-24">
+      <h2 class="mb-1 flex items-center gap-2 text-base font-bold"><i class="fa-solid fa-file-import text-brand-500"></i>استيراد المنتجات من Excel</h2>
+      <p class="mb-4 text-sm text-muted">ارفع ملف بصيغة <span dir="ltr">.xlsx</span>. المنتجات الموجودة (بنفس الـ SKU) بتتحدّث والجديدة بتتضاف. <button type="button" class="font-medium text-brand-600 hover:underline" @click="exportFile(exports[1])">نزّل القالب</button></p>
+
+      <label class="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed px-6 py-10 text-center transition"
+             :class="drag ? 'border-brand-500 bg-brand-500/5' : 'border-line hover:border-brand-500/50 hover:bg-soft'"
+             @dragover.prevent="drag = true" @dragleave.prevent="drag = false" @drop.prevent="drag = false; pick($event.dataTransfer.files[0])">
+        <i class="fa-solid fa-cloud-arrow-up text-3xl text-brand-500"></i>
+        <span class="text-sm font-medium" x-text="file ? file.name : 'اسحب الملف هنا أو اضغط للاختيار'"></span>
+        <span class="text-xs text-muted">xlsx — بحد أقصى 10 ميجا</span>
+        <input type="file" class="sr-only" accept=".xlsx,.xls" @change="pick($event.target.files[0]); $event.target.value = ''">
+      </label>
+
+      <div class="mt-4 flex items-center gap-3"><button type="button" class="btn btn-primary" @click="importFile()" :disabled="!file || importing"><i class="fa-solid fa-spinner animate-spin" x-show="importing"></i><i class="fa-solid fa-upload" x-show="!importing"></i>بدء الاستيراد</button>
+        <button type="button" class="btn btn-ghost" @click="file = null; result = null" x-show="file" x-cloak>إلغاء</button></div>
+
+      <div class="mt-5 space-y-3" x-show="result" x-cloak>
+        <div class="grid grid-cols-3 gap-3 text-center">
+          <div class="rounded-xl bg-brand-500/10 p-3"><div class="text-xs text-muted">منتجات جديدة</div><div class="text-2xl font-bold tabular-nums text-brand-600" x-text="result && result.created"></div></div>
+          <div class="rounded-xl bg-blue-500/10 p-3"><div class="text-xs text-muted">اتحدّثت</div><div class="text-2xl font-bold tabular-nums text-blue-600" x-text="result && result.updated"></div></div>
+          <div class="rounded-xl bg-red-500/10 p-3"><div class="text-xs text-muted">أخطاء</div><div class="text-2xl font-bold tabular-nums text-red-600" x-text="result && result.errors.length"></div></div>
+        </div>
+        <ul class="max-h-60 space-y-1.5 overflow-y-auto rounded-xl border border-line bg-soft p-3 text-sm" x-show="result && result.errors.length">
+          <template x-for="(e, i) in (result ? result.errors : [])" :key="i"><li class="flex gap-2 text-red-700 dark:text-red-300"><i class="fa-solid fa-circle-exclamation mt-1 text-xs"></i><span x-text="errText(e)"></span></li></template>
+        </ul>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script type="module" src="js/layout.js"></script>
+<script type="module" src="js/settings.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
+</body>
+</html>

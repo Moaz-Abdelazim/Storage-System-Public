@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>النقل بين المواقع | مخزني</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="js/theme-init.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+</head>
+<body>
+<noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
+
+<div id="shell" data-active="transfers" data-title="النقل بين المواقع">
+  <div x-data="transfers" class="space-y-5">
+
+    <div>
+      <h1 class="text-2xl font-bold">النقل بين المواقع</h1>
+      <p class="mt-1 text-sm text-muted">انقل كمية منتج من مكان تخزين لمكان تاني — إجمالي المنتج بيفضل زي ما هو.</p>
+    </div>
+
+    <div class="grid gap-5 xl:grid-cols-12">
+      <!-- نموذج النقل -->
+      <section class="card xl:col-span-5">
+        <div class="flex items-center gap-3 border-b border-line p-5">
+          <span class="grid h-10 w-10 place-items-center rounded-xl bg-blue-500/10 text-blue-600"><i class="fa-solid fa-right-left"></i></span>
+          <h2 class="text-base font-bold">نقل جديد</h2>
+        </div>
+        <form class="space-y-4 p-5" @submit.prevent="submit()" novalidate>
+          <div><label class="label">المنتج *</label>
+            <ui-select x-ref="prodSel" source="products" placeholder="ابحث عن منتج بالاسم أو الـ SKU" @pick="pickProduct($event.detail.option)"></ui-select></div>
+
+          <div x-show="product" x-cloak class="flex items-center justify-between rounded-xl bg-soft px-4 py-3 text-sm">
+            <span class="text-muted">الإجمالي الحالي</span><b class="tabular-nums"><span x-text="product && num(product.quantity)"></span> <span class="font-normal text-muted" x-text="product && product.unit"></span></b>
+          </div>
+
+          <div><label class="label">من مكان *</label>
+            <ui-select x-ref="fromSel" placeholder="اختار المنتج الأول" @pick="from = $event.detail.option ? $event.detail.option.data : null; qty = null" :disabled="!product"></ui-select>
+            <p class="mt-1 text-xs text-muted" x-show="product && !fromOptions.length" x-cloak>المنتج ده مفيش له كمية موزعة على أماكن. وزّعها الأول من <a class="font-bold underline" :href="'products.html#search=' + encodeURIComponent(product ? (product.sku || product.name) : '')">صفحة المنتجات</a>.</p></div>
+
+          <div><label class="label">إلى مكان *</label>
+            <ui-select x-ref="toSel" source="leaf-locations" placeholder="اختار مكان التخزين الجديد" @pick="to = $event.detail.option ? $event.detail.option.data : null"></ui-select></div>
+
+          <div>
+            <div class="mb-1.5 flex items-center justify-between"><label class="label !mb-0">الكمية *</label>
+              <button type="button" class="text-xs font-medium text-brand-600 hover:underline" x-show="from" x-cloak @click="qty = from.quantity">نقل الكل (<span x-text="num(from && from.quantity)"></span>)</button></div>
+            <input type="number" class="input" min="0" step="any" inputmode="decimal" x-model.number="qty" :max="from && from.quantity" placeholder="0">
+          </div>
+          <div><label class="label">ملاحظات</label><input type="text" class="input" x-model.trim="notes" maxlength="200" placeholder="اختياري"></div>
+
+          <div class="flex items-center justify-center gap-3 rounded-xl border border-dashed border-line px-3 py-3 text-sm" x-show="from && to" x-cloak>
+            <loc-code :code="from && from.full_code"></loc-code><i class="fa-solid fa-arrow-left text-muted"></i><loc-code :code="to && to.full_code"></loc-code>
+            <b class="tabular-nums" x-show="qty > 0" x-text="'× ' + num(qty)"></b>
+          </div>
+
+          <p class="field-err" x-show="error" x-text="error"></p>
+          <button type="submit" class="btn btn-primary h-11 w-full" :disabled="saving"><i class="fa-solid fa-spinner animate-spin" x-show="saving"></i><i class="fa-solid fa-check" x-show="!saving"></i>تنفيذ النقل</button>
+        </form>
+      </section>
+
+      <!-- الرص + السجل -->
+      <div class="space-y-5 xl:col-span-7">
+        <section class="card" x-show="putaway.total || putaway.unallocated_total" x-cloak>
+          <div class="flex items-center justify-between border-b border-line p-5">
+            <div><h2 class="flex items-center gap-2 text-base font-bold"><i class="fa-solid fa-inbox text-brand-500"></i>في انتظار الرص</h2><p class="text-xs text-muted">بضاعة في أماكن الاستلام لسه ماتنقلتش لمكانها النهائي</p></div>
+            <span class="badge badge-warn" x-text="putaway.total + ' صنف'"></span>
+          </div>
+          <ul class="divide-y divide-line px-5">
+            <template x-for="p in putaway.items" :key="p.product_id + '-' + p.location_id">
+              <li class="flex items-center justify-between gap-3 py-3 text-sm">
+                <div class="min-w-0"><div class="truncate font-medium" x-text="p.name"></div><div class="mt-0.5 flex items-center gap-2 text-xs text-muted"><loc-code :code="p.location_code"></loc-code><span x-text="num(p.quantity) + ' ' + (p.unit || '')"></span></div></div>
+                <button type="button" class="btn btn-outline btn-sm shrink-0" @click="prefill(p)"><i class="fa-solid fa-right-left"></i>نقل</button>
+              </li>
+            </template>
+          </ul>
+          <div class="px-4"><ui-pager :page="putaway.page" :pages="putaway.total_pages" :total="putaway.total" :size="putaway.page_size" @go="loadPutaway($event.detail)"></ui-pager></div>
+          <div class="border-t border-line bg-amber-500/5 px-5 py-3 text-xs text-amber-800 dark:text-amber-200" x-show="putaway.unallocated_total" x-cloak>
+            <i class="fa-solid fa-triangle-exclamation"></i> في <b x-text="putaway.unallocated_total"></b> منتج كميته الإجمالية أكبر من الموزّع على الأماكن. وزّعها من <a href="products.html" class="font-bold underline">صفحة المنتجات</a>.
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="flex flex-wrap items-center gap-2 border-b border-line p-4">
+            <h2 class="me-auto text-base font-bold">سجل النقل</h2>
+            <div class="relative"><i class="fa-solid fa-magnifying-glass pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-xs text-muted"></i>
+              <input type="search" class="input h-9 w-44 ps-9 text-[13px]" placeholder="منتج / SKU" x-model="h.search" @input.debounce.350ms="h.page = 1; loadHistory()" aria-label="بحث في السجل"></div>
+            <input type="date" class="input h-9 w-auto text-[13px]" x-model="h.date_from" @change="h.page = 1; loadHistory()" aria-label="من تاريخ">
+            <input type="date" class="input h-9 w-auto text-[13px]" x-model="h.date_to" @change="h.page = 1; loadHistory()" aria-label="إلى تاريخ">
+          </div>
+          <div class="overflow-x-auto px-3 pt-2">
+            <table class="tbl"><thead><tr><th>المنتج</th><th>من ← إلى</th><th>الكمية</th><th>بواسطة</th><th>التاريخ</th></tr></thead>
+              <tbody>
+                <template x-if="h.loading && !h.rows.length"><template x-for="i in 5"><tr><td colspan="5"><div class="skeleton h-7"></div></td></tr></template></template>
+                <template x-for="t in h.rows" :key="t.id">
+                  <tr><td><div class="font-medium" x-text="t.product_name"></div><div class="text-xs text-muted" x-text="t.sku || ''"></div></td>
+                    <td><span class="inline-flex items-center gap-1.5"><loc-code :code="t.from_code"></loc-code><i class="fa-solid fa-arrow-left text-[10px] text-muted"></i><loc-code :code="t.to_code"></loc-code></span></td>
+                    <td class="font-bold tabular-nums" x-text="num(t.quantity)"></td><td class="text-muted" x-text="t.moved_by || '—'"></td><td class="text-muted" x-text="fmtDateTime(t.date)"></td></tr>
+                </template>
+              </tbody></table>
+            <div class="empty" x-show="!h.loading && !h.rows.length" x-cloak><i class="fa-solid fa-right-left mb-3 text-3xl opacity-40"></i>مفيش حركات نقل</div>
+          </div>
+          <div class="border-t border-line px-4"><ui-pager :page="h.page" :pages="h.pages" :total="h.total" :size="h.size" @go="h.page = $event.detail; loadHistory()"></ui-pager></div>
+        </section>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/layout.js"></script>
+<script type="module" src="js/transfers.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
+</body>
+</html>

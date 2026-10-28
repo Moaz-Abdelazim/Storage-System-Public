@@ -1,0 +1,16 @@
+backend/.env
+backend/.env.example
+backend/env.txt
+backend/sms/
+backend/app/__pycache__/
+backend/app/routers/__pycache__/
+__pycache__/
+.vscode/
+Start Storage system.app/
+run.bat
+setup.bat
+start.sh
+.DS_Store
+backend/app/.DS_Store
+backend/app/routers/.DS_Store
+frontend/.DS_Store

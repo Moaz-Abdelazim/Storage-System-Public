@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>تقرير تنفيذي للإدارة | مخزني</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/exec-report.css">
+</head>
+<body>
+<noscript><p class="state">لازم تفعّل JavaScript عشان التقرير يشتغل.</p></noscript>
+
+<div class="toolbar no-print">
+  <a class="tb-btn" href="reports.html">→ رجوع للتقارير</a>
+  <div class="seg" id="presets" role="group" aria-label="الفترة"></div>
+  <span class="range">
+    <input type="date" id="dFrom" aria-label="من تاريخ"> ← <input type="date" id="dTo" aria-label="إلى تاريخ">
+    <button type="button" class="tb-btn" id="applyRange">عرض</button>
+  </span>
+  <span class="grow"></span>
+  <button type="button" class="tb-btn primary" id="printBtn" disabled>طباعة / حفظ PDF</button>
+</div>
+
+<div class="state no-print" id="state">جاري تجهيز التقرير...</div>
+<main class="sheets" id="sheets" hidden></main>
+
+<script type="module" src="js/executive-report.js"></script>
+</body>
+</html>

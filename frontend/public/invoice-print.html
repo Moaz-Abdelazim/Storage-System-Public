@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>طباعة فاتورة | مخزني</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/invoice-print.css">
+</head>
+<body>
+<noscript><p class="state">لازم تفعّل JavaScript عشان الطباعة تشتغل.</p></noscript>
+
+<div class="toolbar no-print" id="toolbar">
+  <a class="tb-btn" id="backLink" href="movements.html">→ رجوع للفاتورة</a>
+  <button type="button" class="tb-btn primary" id="printBtn" disabled>طباعة / حفظ PDF</button>
+  <label class="tb-check" id="qrWrap" hidden><input type="checkbox" id="qrToggle"> إظهار QR</label>
+  <span class="grow"></span>
+  <span id="pagesInfo" style="font-size:13px"></span>
+</div>
+
+<div class="state no-print" id="state">جاري تحميل الفاتورة...</div>
+<main class="sheets" id="sheets" hidden></main>
+<div id="measure" aria-hidden="true"></div>
+
+<!-- مكتبة QR محلية (من غير أي سيرفر خارجي). حذف السطر ده بيشيل الـ QR نهائيًا (انظر js/print-config.js) -->
+<script src="vendor/qrcode.js"></script>
+<script type="module" src="js/invoice-print.js"></script>
+</body>
+</html>

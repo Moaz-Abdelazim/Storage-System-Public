@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>تسجيل الدخول | مخزني</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="js/theme-init.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+</head>
+<body>
+<noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
+
+<main x-data="login" class="grid min-h-screen lg:grid-cols-2">
+
+  <!-- اللوحة الجانبية (ديسكتوب بس) -->
+  <aside class="relative hidden overflow-hidden bg-side p-12 text-white lg:flex lg:flex-col lg:justify-between">
+    <div class="absolute -start-24 -top-24 h-96 w-96 rounded-full bg-brand-500/15 blur-3xl"></div>
+    <div class="absolute -bottom-32 -end-16 h-[28rem] w-[28rem] rounded-full bg-brand-500/10 blur-3xl"></div>
+
+    <div class="relative flex items-center gap-4">
+      <div>
+        <div class="text-5xl font-bold leading-none">مخزني</div>
+        <div class="mt-2 text-sm text-slate-400">إدارة المخازن والمخزون</div>
+      </div>
+      <svg class="ms-auto h-16 w-16" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+        <path d="M9 58V27L32 8l23 19v31" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="24" y="27" width="16" height="13" rx="2.5" fill="#10B981"/><rect x="15" y="42" width="16" height="14" rx="2.5" fill="#10B981"/><rect x="33" y="42" width="16" height="14" rx="2.5" fill="#10B981"/>
+      </svg>
+    </div>
+
+    <div class="relative max-w-md">
+      <h2 class="text-3xl font-bold leading-snug">كل مخزونك<br>تحت السيطرة، في مكان واحد.</h2>
+      <ul class="mt-8 space-y-4 text-slate-300">
+        <li class="flex items-center gap-3"><span class="grid h-9 w-9 place-items-center rounded-xl bg-white/10 text-brand-400"><i class="fa-solid fa-location-dot"></i></span>تتبّع الكميات لحد الرف والموقع</li>
+        <li class="flex items-center gap-3"><span class="grid h-9 w-9 place-items-center rounded-xl bg-white/10 text-brand-400"><i class="fa-solid fa-right-left"></i></span>فواتير وارد وصادر ونقل بين المواقع</li>
+        <li class="flex items-center gap-3"><span class="grid h-9 w-9 place-items-center rounded-xl bg-white/10 text-brand-400"><i class="fa-solid fa-chart-column"></i></span>تقارير وتنبيهات نواقص فورية</li>
+      </ul>
+    </div>
+    <p class="relative text-xs text-slate-500">© مخزني — جميع الحقوق محفوظة</p>
+  </aside>
+
+  <!-- نموذج الدخول -->
+  <section class="relative flex items-center justify-center p-6">
+    <button type="button" class="btn btn-ghost btn-icon absolute end-4 top-4 overflow-hidden" @click="toggleTheme($el)" aria-label="تبديل الوضع الليلي">
+      <span class="grid text-base">
+        <i class="fa-solid fa-moon col-start-1 row-start-1 transition-all duration-500 ease-out dark:-rotate-90 dark:scale-0 dark:opacity-0"></i>
+        <i class="fa-solid fa-sun col-start-1 row-start-1 rotate-90 scale-0 opacity-0 transition-all duration-500 ease-out dark:rotate-0 dark:scale-100 dark:opacity-100"></i>
+      </span>
+    </button>
+
+    <div class="w-full max-w-sm">
+      <div class="mb-8 flex items-center gap-3 lg:hidden">
+        <svg class="h-12 w-12" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <path d="M9 58V27L32 8l23 19v31" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" class="text-ink-800 dark:text-white"/>
+          <rect x="24" y="27" width="16" height="13" rx="2.5" fill="#10B981"/><rect x="15" y="42" width="16" height="14" rx="2.5" fill="#10B981"/><rect x="33" y="42" width="16" height="14" rx="2.5" fill="#10B981"/>
+        </svg>
+        <div><div class="text-3xl font-bold leading-none">مخزني</div><div class="mt-1 text-xs text-muted">إدارة المخازن والمخزون</div></div>
+      </div>
+
+      <h1 class="text-2xl font-bold">أهلاً بيك 👋</h1>
+      <p class="mt-1 text-sm text-muted">سجّل الدخول علشان تكمل شغلك.</p>
+
+      <form class="mt-8 space-y-5" @submit.prevent="submit()" novalidate>
+        <div>
+          <label for="username" class="label">اسم المستخدم</label>
+          <div class="relative">
+            <i class="fa-regular fa-user pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-sm text-muted"></i>
+            <input id="username" type="text" x-model.trim="username" class="input ps-10" autocomplete="username" autocapitalize="off" spellcheck="false" autofocus :disabled="loading">
+          </div>
+        </div>
+        <div>
+          <label for="password" class="label">كلمة المرور</label>
+          <div class="relative">
+            <i class="fa-solid fa-lock pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-sm text-muted"></i>
+            <input id="password" :type="show ? 'text' : 'password'" x-model="password" class="input px-10" autocomplete="current-password" :disabled="loading">
+            <button type="button" class="absolute end-1.5 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg text-muted hover:bg-soft" @click="show = !show" :aria-label="show ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'">
+              <i class="fa-regular text-sm" :class="show ? 'fa-eye-slash' : 'fa-eye'"></i></button>
+          </div>
+        </div>
+
+        <div x-show="error" x-cloak role="alert" class="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800 dark:border-red-500/30 dark:bg-red-950/50 dark:text-red-200">
+          <i class="fa-solid fa-circle-exclamation mt-0.5"></i><span x-text="error"></span>
+        </div>
+
+        <button type="submit" class="btn btn-primary h-11 w-full text-[15px]" :disabled="loading">
+          <i class="fa-solid fa-spinner animate-spin" x-show="loading" x-cloak></i>
+          <span x-text="loading ? 'جاري الدخول...' : 'دخول'"></span>
+        </button>
+      </form>
+    </div>
+  </section>
+</main>
+
+<script type="module" src="js/login.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
+</body>
+</html>

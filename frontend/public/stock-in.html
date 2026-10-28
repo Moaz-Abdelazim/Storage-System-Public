@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>فاتورة وارد | مخزني</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="js/theme-init.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+</head>
+<body>
+<noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
+
+<div id="shell" data-active="stock-in" data-title="فاتورة وارد">
+  <div x-data="stockIn" class="space-y-5">
+
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <span class="grid h-12 w-12 place-items-center rounded-2xl text-xl bg-brand-500/10 text-brand-600 dark:text-brand-300"><i class="fa-solid fa-arrow-down"></i></span>
+        <div><h1 class="text-2xl font-bold">فاتورة وارد</h1><p class="mt-0.5 text-sm text-muted">استلام بضاعة من مورد وتخزينها في مكانها</p></div>
+      </div>
+      <a href="movements.html#kind=in" class="btn btn-outline"><i class="fa-solid fa-clock-rotate-left"></i>كل الفواتير</a>
+    </div>
+
+    <!-- نجاح -->
+    <div x-show="done" x-cloak x-transition class="flex flex-wrap items-center gap-3 rounded-2xl border border-brand-200 bg-brand-50 p-4 text-sm text-brand-900 dark:border-brand-500/30 dark:bg-brand-950/50 dark:text-brand-100">
+      <i class="fa-solid fa-circle-check text-xl text-brand-500"></i>
+      <span class="flex-1">تم تسجيل الفاتورة <b x-text="'#' + (done && done.id)"></b> بنجاح.</span>
+      <a :href="'invoice.html#kind=in&id=' + (done && done.id)" class="btn btn-outline btn-sm">عرض الفاتورة</a>
+      <a :href="'invoice-print.html#kind=in&id=' + (done && done.id)" class="btn btn-outline btn-sm"><i class="fa-solid fa-print"></i>طباعة</a>
+      <button type="button" class="btn btn-ghost btn-sm" @click="done = null"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <div class="grid gap-5 xl:grid-cols-12">
+      <!-- الفاتورة -->
+      <form class="card xl:col-span-8" @submit.prevent="submit()" novalidate>
+        <div class="h-1.5 rounded-t-2xl bg-brand-500"></div>
+        <div class="grid gap-4 p-5 sm:grid-cols-2">
+          <div>
+            <div class="mb-1.5 flex items-center justify-between"><label class="label !mb-0">المورد</label>
+              <button type="button" class="text-xs font-medium text-brand-600 hover:underline" @click="newParty.open = true; newParty.name = ''; newParty.phone = ''; newParty.error = ''"><i class="fa-solid fa-plus"></i> جديد</button></div>
+            <ui-select x-ref="partySel" source="suppliers" placeholder="اختار المورد (اختياري)" clearable @pick="partyId = $event.detail.value"></ui-select>
+          </div>
+          <div><label class="label">ملاحظات</label><input type="text" class="input" x-model.trim="notes" maxlength="300" placeholder="ملاحظات على الفاتورة (اختياري)"></div>
+        </div>
+
+        <div class="border-t border-line">
+          <div class="hidden grid-cols-[minmax(0,2.4fr)_minmax(0,1.6fr)_6rem_6.5rem_5.5rem_2.25rem] gap-3 bg-soft/70 px-5 py-2.5 text-xs font-medium text-muted lg:grid">
+            <span>المنتج</span><span>مكان التخزين</span><span>الكمية</span><span>سعر الشراء</span><span class="text-end">الإجمالي</span><span></span>
+          </div>
+          <ul class="divide-y divide-line">
+            <template x-for="(l, i) in lines" :key="l.key">
+              <li class="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(0,2.4fr)_minmax(0,1.6fr)_6rem_6.5rem_5.5rem_2.25rem] lg:items-start lg:py-3">
+                <div>
+                  <label class="label lg:hidden">المنتج</label>
+                  <ui-select source="products" placeholder="ابحث عن منتج..." x-effect="l.option && $el.value !== l.product.id && $el.setSelected(l.option)" @pick="pickProduct(l, $event.detail.option)"></ui-select>
+                  <p class="mt-1 text-xs text-muted" x-show="l.product"><span x-text="'الإجمالي الحالي: ' + num(l.product && l.product.quantity) + ' ' + (l.product ? l.product.unit || '' : '')"></span></p>
+                </div>
+                <div>
+                  <label class="label lg:hidden">مكان التخزين</label>
+                  <ui-select source="receiving" placeholder="مكان الاستلام" x-effect="$el.value = l.location" @pick="l.location = $event.detail.value; l.locData = $event.detail.option && $event.detail.option.data"></ui-select>
+                  <p class="mt-1 text-xs" :class="l.over ? 'text-red-600' : 'text-muted'" x-show="l.locData && l.locData.quantity != null" x-text="'المتاح: ' + num(l.locData && l.locData.quantity)"></p>
+                </div>
+                <div><label class="label lg:hidden">الكمية</label><input type="number" class="input" :class="l.over && 'border-red-400'" min="0" step="any" inputmode="decimal" x-model.number="l.quantity" placeholder="0"></div>
+                <div><label class="label lg:hidden">سعر الشراء</label><input type="number" class="input" min="0" step="0.01" inputmode="decimal" x-model.number="l.unit_price" placeholder="اختياري" @keydown.enter.prevent="i === lines.length - 1 && addLine()"></div>
+                <div class="flex items-center justify-between lg:block lg:pt-2.5 lg:text-end"><span class="text-xs text-muted lg:hidden">الإجمالي</span><b class="tabular-nums" x-text="money(lineTotal(l))"></b></div>
+                <div class="flex justify-end"><button type="button" class="btn btn-ghost btn-icon btn-sm !h-9 !w-9 text-red-500" @click="removeLine(i)" aria-label="حذف السطر" :disabled="lines.length === 1"><i class="fa-solid fa-trash-can"></i></button></div>
+              </li>
+            </template>
+          </ul>
+          <div class="px-5 py-3"><button type="button" class="btn btn-outline btn-sm" @click="addLine()"><i class="fa-solid fa-plus"></i>إضافة سطر</button></div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-4 rounded-b-2xl border-t border-line bg-soft/60 p-5">
+          <dl class="flex flex-wrap gap-x-8 gap-y-2 text-sm">
+            <div><dt class="kpi-label">عدد الأصناف</dt><dd class="text-lg font-bold tabular-nums" x-text="filledLines.length"></dd></div>
+            <div><dt class="kpi-label">إجمالي الكمية</dt><dd class="text-lg font-bold tabular-nums" x-text="num(totalQty)"></dd></div>
+            <div><dt class="kpi-label">إجمالي القيمة</dt><dd class="text-lg font-bold tabular-nums" x-text="money(totalValue)"></dd></div>
+          </dl>
+          <div class="flex items-center gap-2">
+            <button type="button" class="btn btn-outline" @click="reset()" :disabled="saving">مسح</button>
+            <button type="submit" class="btn btn-primary h-11 px-6" :disabled="saving"><i class="fa-solid fa-spinner animate-spin" x-show="saving"></i><i class="fa-solid fa-check" x-show="!saving"></i>تسجيل الوارد</button>
+          </div>
+        </div>
+        <p class="field-err px-5 pb-4" x-show="error" x-text="error"></p>
+      </form>
+
+      <!-- آخر الفواتير -->
+      <aside class="xl:col-span-4">
+        <section class="card">
+          <div class="flex items-center justify-between border-b border-line p-5"><h2 class="text-base font-bold">آخر الفواتير</h2><a href="movements.html#kind=in" class="text-xs font-medium text-brand-600 hover:underline">عرض الكل</a></div>
+          <ul class="divide-y divide-line">
+            <template x-if="recentLoading"><template x-for="i in 4"><li class="p-4"><div class="skeleton h-10"></div></li></template></template>
+            <template x-for="r in recent" :key="r.invoice_id">
+              <li><a :href="'invoice.html#kind=in&id=' + r.invoice_id" class="flex items-center gap-3 px-5 py-3 transition hover:bg-soft">
+                <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-sm bg-brand-500/10 text-brand-600 dark:text-brand-300"><i class="fa-solid fa-arrow-down"></i></span>
+                <span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium" x-text="'فاتورة #' + r.invoice_id + ' · ' + (r.party_name || 'بدون جهة')"></span>
+                  <span class="block text-xs text-muted" x-text="fmtDateTime(r.date) + ' · ' + r.items_total + ' صنف'"></span></span>
+                <b class="text-sm tabular-nums" x-text="money(r.total_value)"></b></a></li>
+            </template>
+          </ul>
+          <p class="empty" x-show="!recentLoading && !recent.length">مفيش فواتير لسه.</p>
+        </section>
+      </aside>
+    </div>
+
+    <!-- جهة جديدة -->
+    <div x-show="newParty.open" x-cloak x-transition.opacity class="modal" role="dialog" aria-modal="true" @keydown.escape.window="newParty.open = false">
+      <div class="modal-backdrop" @click="newParty.open = false"></div>
+      <form class="modal-panel max-w-md" @submit.prevent="saveParty()" novalidate>
+        <div class="modal-head"><h2 class="text-lg font-bold">إضافة المورد جديد</h2><button type="button" class="btn btn-ghost btn-icon btn-sm" @click="newParty.open = false" aria-label="إغلاق"><i class="fa-solid fa-xmark"></i></button></div>
+        <div class="modal-body space-y-4">
+          <div><label class="label">الاسم *</label><input type="text" class="input" x-model.trim="newParty.name" maxlength="150"></div>
+          <div><label class="label">رقم الهاتف</label><input type="tel" class="input" dir="ltr" x-model.trim="newParty.phone" maxlength="30"></div>
+          <p class="field-err" x-show="newParty.error" x-text="newParty.error"></p>
+        </div>
+        <div class="modal-foot"><button type="button" class="btn btn-outline" @click="newParty.open = false">إلغاء</button><button type="submit" class="btn btn-primary" :disabled="newParty.saving">حفظ</button></div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/layout.js"></script>
+<script type="module" src="js/stock-in.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
+</body>
+</html>

@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>المنتجات | مخزني</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="js/theme-init.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+</head>
+<body>
+<noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
+
+<div id="shell" data-active="products" data-title="المنتجات">
+  <div x-data="products" class="space-y-5">
+
+    <!-- ===== العنوان ===== -->
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-bold">المنتجات</h1>
+        <p class="mt-1 text-sm text-muted">إدارة الأصناف والكميات وتوزيعها على أماكن التخزين</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <button type="button" class="btn btn-outline" @click="exportExcel()" :disabled="exporting"><i class="fa-solid fa-file-excel text-green-600"></i>تصدير Excel</button>
+        <a href="settings.html#import" class="btn btn-outline"><i class="fa-solid fa-file-import"></i>استيراد</a>
+        <button type="button" class="btn btn-primary" @click="openForm()"><i class="fa-solid fa-plus"></i>إضافة منتج</button>
+      </div>
+    </div>
+
+    <!-- ===== الفلاتر ===== -->
+    <section class="card card-pad">
+      <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-12">
+        <div class="relative md:col-span-2 xl:col-span-4">
+          <i class="fa-solid fa-magnifying-glass pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-sm text-muted"></i>
+          <input type="search" class="input ps-10" placeholder="ابحث بالاسم أو الـ SKU..." x-model="filters.search" @input.debounce.350ms="applyFilters()" aria-label="بحث">
+        </div>
+        <div class="xl:col-span-2"><ui-select source="categories" placeholder="كل التصنيفات" clearable x-effect="$el.value = filters.category_id" @pick="filters.category_id = $event.detail.value; applyFilters()"></ui-select></div>
+        <div class="xl:col-span-2"><ui-select source="brands" placeholder="كل الماركات" clearable x-effect="$el.value = filters.brand_id" @pick="filters.brand_id = $event.detail.value; applyFilters()"></ui-select></div>
+        <div class="xl:col-span-2">
+          <select class="select" x-model="filters.status" @change="applyFilters()" aria-label="حالة المنتج">
+            <option value="active">المنتجات النشطة</option><option value="inactive">المنتجات المعطّلة</option><option value="all">الكل</option>
+          </select>
+        </div>
+        <div class="seg md:col-span-2 xl:col-span-12 xl:justify-self-start" role="tablist" aria-label="حالة المخزون">
+          <template x-for="s in stockTabs" :key="s.key">
+            <button type="button" class="seg-btn" :class="filters.stock === s.key && 'seg-btn-on'" @click="filters.stock = s.key; applyFilters()" x-text="s.label"></button>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== الجدول ===== -->
+    <section class="card">
+      <div class="overflow-x-auto px-3 pt-3">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th><button type="button" class="inline-flex items-center gap-1.5" @click="sortBy('name')">المنتج<i class="fa-solid text-[10px]" :class="sortIcon('name')"></i></button></th>
+              <th>التصنيف / الماركة</th>
+              <th><button type="button" class="inline-flex items-center gap-1.5" @click="sortBy('quantity')">الكمية<i class="fa-solid text-[10px]" :class="sortIcon('quantity')"></i></button></th>
+              <th><button type="button" class="inline-flex items-center gap-1.5" @click="sortBy('price')">السعر<i class="fa-solid text-[10px]" :class="sortIcon('price')"></i></button></th>
+              <th>المكان</th><th>الكمية بالمكان</th>
+              <th>الحالة</th>
+              <th class="w-1"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-if="loading && !rows.length"><template x-for="i in 8"><tr><td colspan="8"><div class="skeleton h-7"></div></td></tr></template></template>
+            <template x-for="p in rows" :key="p.id">
+              <tr :class="loading && 'opacity-60'">
+                <td>
+                  <button type="button" class="text-start" @click="openDetail(p)">
+                    <div class="font-medium hover:text-brand-600" x-text="p.name"></div>
+                    <div class="mt-0.5" x-show="p.sku"><span class="code-chip" x-text="p.sku"></span></div>
+                  </button>
+                </td>
+                <td>
+                  <div x-text="p.category_name || '—'"></div>
+                  <div class="text-xs text-muted" x-text="p.brand_name || ''"></div>
+                </td>
+                <td>
+                  <span class="font-bold tabular-nums" x-text="num(p.quantity)"></span>
+                  <span class="text-xs text-muted" x-text="p.unit"></span>
+                  <div x-show="p.unassigned_quantity > 0" class="text-xs text-amber-600" title="كمية من غير مكان تخزين"><i class="fa-solid fa-triangle-exclamation"></i> <span x-text="num(p.unassigned_quantity)"></span> بدون مكان</div>
+                </td>
+                <td class="tabular-nums" x-text="money(p.price)"></td>
+                <td>
+                  <div class="space-y-1">
+                    <template x-for="l in p.locations.slice(0, 3)" :key="l.location_id"><div class="flex h-6 items-center"><loc-code :code="l.full_code"></loc-code></div></template>
+                    <div class="flex h-6 items-center text-xs text-muted" x-show="p.locations.length > 3" x-text="'+' + (p.locations.length - 3) + ' أماكن أخرى'"></div>
+                    <span class="text-xs text-muted" x-show="!p.locations.length">—</span>
+                  </div>
+                </td>
+                <td>
+                  <div class="space-y-1">
+                    <template x-for="l in p.locations.slice(0, 3)" :key="l.location_id"><div class="flex h-6 items-center font-bold tabular-nums" x-text="num(l.quantity)"></div></template>
+                    <div class="h-6" x-show="p.locations.length > 3"><button type="button" class="text-xs font-medium text-brand-600 hover:underline" @click="openDetail(p)">عرض الكل</button></div>
+                  </div>
+                </td>
+                <td><span class="badge" :class="statusOf(p).cls" x-text="statusOf(p).label"></span></td>
+                <td>
+                  <div class="flex items-center gap-0.5">
+                    <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تفاصيل وحركات" @click="openDetail(p)"><i class="fa-regular fa-eye"></i></button>
+                    <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="توزيع الكمية على الأماكن" @click="openLocations(p)"><i class="fa-solid fa-location-dot"></i></button>
+                    <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تعديل" @click="openForm(p)"><i class="fa-solid fa-pen"></i></button>
+                    <template x-if="admin"><button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" :title="p.is_active === false ? 'تفعيل' : 'تعطيل'" @click="toggleActive(p)"><i class="fa-solid" :class="p.is_active === false ? 'fa-toggle-off' : 'fa-toggle-on text-brand-500'"></i></button></template>
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+
+        <div x-show="!loading && !rows.length && !error" x-cloak class="empty"><i class="fa-solid fa-box-open mb-3 text-4xl opacity-40"></i>مفيش منتجات مطابقة للبحث</div>
+        <div x-show="error" x-cloak class="empty"><p class="mb-3 text-red-500" x-text="error"></p><button type="button" class="btn btn-outline btn-sm" @click="load()">إعادة المحاولة</button></div>
+      </div>
+      <div class="border-t border-line px-4"><ui-pager :page="page" :pages="pages" :total="total" :size="size" @go="go($event.detail)"></ui-pager></div>
+    </section>
+
+    <!-- ===== نافذة إضافة / تعديل ===== -->
+    <div x-show="form.open" x-cloak x-transition.opacity class="modal" role="dialog" aria-modal="true" @keydown.escape.window="form.open = false">
+      <div class="modal-backdrop" @click="form.open = false"></div>
+      <form class="modal-panel max-w-2xl" @submit.prevent="saveForm()" novalidate>
+        <div class="modal-head"><h2 class="text-lg font-bold" x-text="form.id ? 'تعديل المنتج' : 'إضافة منتج جديد'"></h2>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" @click="form.open = false" aria-label="إغلاق"><i class="fa-solid fa-xmark"></i></button></div>
+        <div class="modal-body space-y-4">
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div class="sm:col-span-2"><label class="label">اسم المنتج *</label><input type="text" class="input" x-model.trim="form.name" maxlength="150" required :class="form.errors.name && 'border-red-400'"><p class="field-err" x-text="form.errors.name" x-show="form.errors.name"></p></div>
+            <div><label class="label">كود المنتج (SKU)</label><input type="text" class="input" dir="ltr" x-model.trim="form.sku" maxlength="50" placeholder="اختياري"></div>
+            <div><label class="label">الوحدة</label><input type="text" class="input" x-model.trim="form.unit" list="units" maxlength="30"><datalist id="units"><option value="قطعة"><option value="علبة"><option value="كرتونة"><option value="كيلو"><option value="لتر"><option value="متر"></datalist></div>
+            <div><label class="label">التصنيف</label><ui-select source="categories" placeholder="بدون تصنيف" clearable x-effect="$el.value = form.category_id" @pick="form.category_id = $event.detail.value"></ui-select></div>
+            <div><label class="label">الماركة</label><ui-select source="brands" placeholder="بدون ماركة" clearable x-effect="$el.value = form.brand_id" @pick="form.brand_id = $event.detail.value"></ui-select></div>
+            <div><label class="label">السعر (ج.م)</label><input type="number" class="input" min="0" step="0.01" inputmode="decimal" x-model.number="form.price"></div>
+            <div><label class="label">الحد الأدنى للتنبيه</label><input type="number" class="input" min="0" step="any" inputmode="decimal" x-model.number="form.min_quantity"></div>
+          </div>
+
+          <!-- الكمية الابتدائية (عند الإضافة بس) -->
+          <div x-show="!form.id" class="rounded-xl border border-line bg-soft/60 p-4">
+            <div class="mb-3 flex items-center justify-between">
+              <div><h3 class="text-sm font-bold">الكمية الحالية وأماكن التخزين</h3><p class="text-xs text-muted">أي كمية لازم يتحدد لها مكان. سيبها فاضية لو هتدخّل البضاعة من فاتورة وارد.</p></div>
+              <button type="button" class="btn btn-outline btn-sm" @click="addRow(form.rows)"><i class="fa-solid fa-plus"></i>مكان</button>
+            </div>
+            <div class="space-y-2">
+              <template x-for="(r, i) in form.rows" :key="r.key">
+                <div class="grid grid-cols-[1fr_7rem_2.25rem] items-center gap-2">
+                  <ui-select source="leaf-locations" placeholder="اختر مكان التخزين" x-effect="$el.value = r.location_id" @pick="r.location_id = $event.detail.value"></ui-select>
+                  <input type="number" class="input" min="0" step="any" inputmode="decimal" placeholder="الكمية" x-model.number="r.quantity">
+                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-9 !w-9 text-red-500" @click="form.rows.splice(i, 1)" aria-label="حذف"><i class="fa-solid fa-trash-can"></i></button>
+                </div>
+              </template>
+            </div>
+            <p class="mt-3 text-sm" x-show="form.rows.length">الإجمالي: <b class="tabular-nums" x-text="num(rowsTotal(form.rows))"></b></p>
+          </div>
+          <p class="field-err" x-show="form.errors.general" x-text="form.errors.general"></p>
+        </div>
+        <div class="modal-foot"><button type="button" class="btn btn-outline" @click="form.open = false">إلغاء</button>
+          <button type="submit" class="btn btn-primary" :disabled="form.saving"><i class="fa-solid fa-spinner animate-spin" x-show="form.saving"></i>حفظ</button></div>
+      </form>
+    </div>
+
+    <!-- ===== نافذة توزيع الكمية ===== -->
+    <div x-show="loc.open" x-cloak x-transition.opacity class="modal" role="dialog" aria-modal="true" @keydown.escape.window="loc.open = false">
+      <div class="modal-backdrop" @click="loc.open = false"></div>
+      <form class="modal-panel max-w-xl" @submit.prevent="saveLocations()">
+        <div class="modal-head"><div><h2 class="text-lg font-bold">توزيع الكمية على الأماكن</h2><p class="text-sm text-muted" x-text="loc.product && loc.product.name"></p></div>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" @click="loc.open = false" aria-label="إغلاق"><i class="fa-solid fa-xmark"></i></button></div>
+        <div class="modal-body space-y-3">
+          <div class="rounded-xl bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-800 dark:text-amber-200"><i class="fa-solid fa-circle-info"></i> ده تصحيح جرد: بيستبدل التوزيع كله، وإجمالي المنتج = مجموع الأماكن. التغيير بيتسجّل في سجل التعديلات. لنقل كمية من مكان لمكان من غير ما الإجمالي يتغير استخدم <a href="transfers.html" class="font-bold underline">النقل بين المواقع</a>.</div>
+          <template x-for="(r, i) in loc.rows" :key="r.key">
+            <div class="grid grid-cols-[1fr_7rem_2.25rem] items-center gap-2">
+              <ui-select source="leaf-locations" placeholder="اختر مكان التخزين" x-effect="$el.value = r.location_id" @pick="r.location_id = $event.detail.value"></ui-select>
+              <input type="number" class="input" min="0" step="any" inputmode="decimal" x-model.number="r.quantity">
+              <button type="button" class="btn btn-ghost btn-icon btn-sm !h-9 !w-9 text-red-500" @click="loc.rows.splice(i, 1)" aria-label="حذف"><i class="fa-solid fa-trash-can"></i></button>
+            </div>
+          </template>
+          <button type="button" class="btn btn-outline btn-sm" @click="addRow(loc.rows)"><i class="fa-solid fa-plus"></i>إضافة مكان</button>
+          <div class="flex items-center justify-between rounded-xl bg-soft px-4 py-3 text-sm">
+            <span>الإجمالي الجديد: <b class="tabular-nums" x-text="num(rowsTotal(loc.rows))"></b> <span class="text-muted" x-text="loc.product && loc.product.unit"></span></span>
+            <span class="text-muted">الحالي: <span class="tabular-nums" x-text="loc.product && num(loc.product.quantity)"></span></span>
+          </div>
+          <div><label class="label">سبب التعديل (اختياري)</label><input type="text" class="input" x-model.trim="loc.reason" maxlength="200" placeholder="مثال: جرد نهاية الشهر"></div>
+          <p class="field-err" x-show="loc.error" x-text="loc.error"></p>
+        </div>
+        <div class="modal-foot"><button type="button" class="btn btn-outline" @click="loc.open = false">إلغاء</button>
+          <button type="submit" class="btn btn-primary" :disabled="loc.saving"><i class="fa-solid fa-spinner animate-spin" x-show="loc.saving"></i>حفظ التوزيع</button></div>
+      </form>
+    </div>
+
+    <!-- ===== نافذة التفاصيل ===== -->
+    <div x-show="detail.open" x-cloak x-transition.opacity class="modal" role="dialog" aria-modal="true" @keydown.escape.window="detail.open = false">
+      <div class="modal-backdrop" @click="detail.open = false"></div>
+      <div class="modal-panel max-w-3xl">
+        <div class="modal-head">
+          <div><h2 class="text-lg font-bold" x-text="detail.product && detail.product.name"></h2>
+            <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted"><span class="code-chip" x-show="detail.product && detail.product.sku" x-text="detail.product && detail.product.sku"></span>
+              <span class="badge" :class="detail.product && statusOf(detail.product).cls" x-text="detail.product && statusOf(detail.product).label"></span></div></div>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" @click="detail.open = false" aria-label="إغلاق"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="flex border-b border-line px-3">
+          <button type="button" class="tab" :class="detail.tab === 'locations' && 'tab-on'" @click="detail.tab = 'locations'">الأماكن</button>
+          <button type="button" class="tab" :class="detail.tab === 'in' && 'tab-on'" @click="loadMovements('in', 1)">الوارد</button>
+          <button type="button" class="tab" :class="detail.tab === 'out' && 'tab-on'" @click="loadMovements('out', 1)">الصادر</button>
+        </div>
+        <div class="modal-body">
+          <div x-show="detail.tab === 'locations'">
+            <div class="mb-4 grid grid-cols-3 gap-3 text-center">
+              <div class="rounded-xl bg-soft p-3"><div class="kpi-label">الكمية الحالية</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="detail.product && num(detail.product.quantity)"></div></div>
+              <div class="rounded-xl bg-soft p-3"><div class="kpi-label">الحد الأدنى</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="detail.product && num(detail.product.min_quantity)"></div></div>
+              <div class="rounded-xl bg-soft p-3"><div class="kpi-label">السعر</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="detail.product && money(detail.product.price)"></div></div>
+            </div>
+            <ul class="divide-y divide-line">
+              <template x-for="l in (detail.product ? detail.product.locations : [])" :key="l.location_id">
+                <li class="flex items-center justify-between py-2.5 text-sm"><loc-code :code="l.full_code"></loc-code><span class="font-bold tabular-nums" x-text="num(l.quantity)"></span></li>
+              </template>
+            </ul>
+            <p class="empty" x-show="detail.product && !detail.product.locations.length">المنتج ده مش متوزع على أماكن تخزين.</p>
+          </div>
+          <template x-for="kind in ['in', 'out']" :key="kind">
+            <div x-show="detail.tab === kind">
+              <div x-show="detail.loading" class="space-y-2"><div class="skeleton h-8"></div><div class="skeleton h-8"></div><div class="skeleton h-8"></div></div>
+              <div class="overflow-x-auto" x-show="!detail.loading && detail.mv.items.length">
+                <table class="tbl"><thead><tr><th>الفاتورة</th><th>التاريخ</th><th x-text="kind === 'in' ? 'المورد' : 'الجهة'"></th><th>الكمية</th><th>السعر</th><th>بواسطة</th></tr></thead>
+                  <tbody><template x-for="m in detail.mv.items" :key="kind + m.invoice_id + m.date">
+                    <tr><td><a :href="'invoice.html#kind=' + kind + '&id=' + m.invoice_id" class="font-medium text-brand-600 hover:underline" x-text="'#' + m.invoice_id"></a></td>
+                      <td class="text-muted" x-text="fmtDateTime(m.date)"></td><td x-text="m.party_name || '—'"></td>
+                      <td class="font-bold tabular-nums" :class="kind === 'in' ? 'text-brand-600' : 'text-orange-600'" x-text="(kind === 'in' ? '+' : '−') + num(m.quantity)"></td>
+                      <td class="tabular-nums" x-text="m.unit_price != null ? money(m.unit_price) : '—'"></td><td class="text-muted" x-text="m.user_name || '—'"></td></tr></template></tbody></table>
+              </div>
+              <p class="empty" x-show="!detail.loading && !detail.mv.items.length">مفيش حركات لسه.</p>
+              <ui-pager x-show="detail.tab === kind" :page="detail.mv.page" :pages="detail.mv.total_pages" :total="detail.mv.total" :size="detail.mv.page_size" @go="loadMovements(kind, $event.detail)"></ui-pager>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script type="module" src="js/layout.js"></script>
+<script type="module" src="js/products.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
+</body>
+</html>

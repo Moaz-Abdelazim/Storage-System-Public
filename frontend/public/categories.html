@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>التصنيفات | مخزني</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="js/theme-init.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+</head>
+<body>
+<noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
+
+<div id="shell" data-active="categories" data-title="التصنيفات">
+  <div x-data="categories" class="space-y-5">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div><h1 class="text-2xl font-bold">التصنيفات</h1><p class="mt-1 text-sm text-muted">نظّم المنتجات حسب تصنيف وتابع الكميات</p></div>
+      <button type="button" class="btn btn-primary" @click="openForm()"><i class="fa-solid fa-plus"></i>إضافة تصنيف</button>
+    </div>
+
+    <div class="grid gap-4 sm:grid-cols-3">
+      <div class="card card-pad flex items-center gap-4"><span class="grid h-12 w-12 place-items-center rounded-2xl bg-brand-500/10 text-xl text-brand-600"><i class="fa-solid fa-tags"></i></span>
+        <div><div class="kpi-label">عدد الالتصنيفات</div><div class="text-2xl font-bold tabular-nums" x-text="total"></div></div></div>
+      <div class="card card-pad flex items-center gap-4"><span class="grid h-12 w-12 place-items-center rounded-2xl bg-blue-500/10 text-xl text-blue-600"><i class="fa-solid fa-cube"></i></span>
+        <div><div class="kpi-label">منتجات مصنّفة</div><div class="text-2xl font-bold tabular-nums" x-text="num(classified)"></div></div></div>
+      <div class="card card-pad"><label class="label" for="q">بحث</label><div class="relative"><i class="fa-solid fa-magnifying-glass pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-sm text-muted"></i><input id="q" type="search" class="input ps-10" placeholder="ابحث بالاسم..." x-model="search" @input.debounce.350ms="apply()"></div></div>
+    </div>
+
+    <section class="card">
+      <div class="overflow-x-auto p-3">
+        <table class="tbl">
+          <thead><tr><th>الاسم</th><th>عدد المنتجات</th><th>إجمالي الكمية</th><th>تاريخ الإضافة</th><th class="w-1"></th></tr></thead>
+          <tbody>
+            <template x-if="loading && !rows.length"><template x-for="i in 5"><tr><td colspan="5"><div class="skeleton h-7"></div></td></tr></template></template>
+            <template x-for="r in rows" :key="r.id">
+              <tr>
+                <td class="font-medium" x-text="r.name"></td>
+                <td><a :href="link(r)" class="badge badge-info hover:underline" x-text="num(r.products_count) + ' منتج'"></a></td>
+                <td class="tabular-nums" x-text="num(r.total_quantity)"></td>
+                <td class="text-muted" x-text="fmtDate(r.created_at)"></td>
+                <td><div class="flex items-center gap-0.5">
+                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تعديل" @click="openForm(r)"><i class="fa-solid fa-pen"></i></button>
+                  <template x-if="admin"><button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8 text-red-500" title="حذف" @click="remove(r)"><i class="fa-solid fa-trash-can"></i></button></template>
+                </div></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <div class="empty" x-show="!loading && !error && !rows.length" x-cloak><i class="fa-solid fa-tags mb-3 text-4xl opacity-40"></i>مفيش التصنيفات مطابقة</div>
+        <div class="empty" x-show="error" x-cloak><p class="mb-3 text-red-500" x-text="error"></p><button type="button" class="btn btn-outline btn-sm" @click="load()">إعادة المحاولة</button></div>
+      </div>
+      <div class="border-t border-line px-4"><ui-pager :page="page" :pages="pages" :total="total" :size="size" @go="page = $event.detail; load()"></ui-pager></div>
+    </section>
+
+    <div x-show="form.open" x-cloak x-transition.opacity class="modal" role="dialog" aria-modal="true" @keydown.escape.window="form.open = false">
+      <div class="modal-backdrop" @click="form.open = false"></div>
+      <form class="modal-panel max-w-md" @submit.prevent="save()" novalidate>
+        <div class="modal-head"><h2 class="text-lg font-bold" x-text="form.id ? 'تعديل التصنيف' : 'إضافة تصنيف جديدة'"></h2>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" @click="form.open = false" aria-label="إغلاق"><i class="fa-solid fa-xmark"></i></button></div>
+        <div class="modal-body"><label class="label" for="n">اسم التصنيف *</label><input id="n" type="text" class="input" x-model="form.name" maxlength="100" x-init="$watch('form.open', v => v && $nextTick(() => $el.focus()))"><p class="field-err" x-show="form.error" x-text="form.error"></p></div>
+        <div class="modal-foot"><button type="button" class="btn btn-outline" @click="form.open = false">إلغاء</button>
+          <button type="submit" class="btn btn-primary" :disabled="form.saving"><i class="fa-solid fa-spinner animate-spin" x-show="form.saving"></i>حفظ</button></div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/layout.js"></script>
+<script type="module" src="js/categories.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
+</body>
+</html>

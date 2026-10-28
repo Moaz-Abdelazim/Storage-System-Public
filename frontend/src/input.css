@@ -1,0 +1,134 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------- الخط: Tajawal (self-hosted) ---------- */
+@font-face { font-family: "Tajawal"; font-weight: 400; font-style: normal; font-display: swap;
+  src: url("../fonts/tajawal-arabic-400-normal.woff2") format("woff2");
+  unicode-range: U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F; }
+@font-face { font-family: "Tajawal"; font-weight: 500; font-style: normal; font-display: swap;
+  src: url("../fonts/tajawal-arabic-500-normal.woff2") format("woff2");
+  unicode-range: U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F; }
+@font-face { font-family: "Tajawal"; font-weight: 700; font-style: normal; font-display: swap;
+  src: url("../fonts/tajawal-arabic-700-normal.woff2") format("woff2");
+  unicode-range: U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F; }
+@font-face { font-family: "Tajawal"; font-weight: 400; font-style: normal; font-display: swap;
+  src: url("../fonts/tajawal-latin-400-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Tajawal"; font-weight: 500; font-style: normal; font-display: swap;
+  src: url("../fonts/tajawal-latin-500-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Tajawal"; font-weight: 700; font-style: normal; font-display: swap;
+  src: url("../fonts/tajawal-latin-700-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+/* ---------- ألوان الثيم ---------- */
+:root {
+  --c-app: 243 244 246;   /* #F3F4F6 */
+  --c-card: 255 255 255;
+  --c-soft: 249 250 251;
+  --c-line: 229 231 235;
+  --c-fg: 31 41 55;       /* #1F2937 */
+  --c-muted: 100 116 139;
+  --c-side: 31 41 55;
+  color-scheme: light;
+}
+.dark {
+  --c-app: 15 21 30;
+  --c-card: 24 32 44;
+  --c-soft: 30 40 54;
+  --c-line: 42 53 69;
+  --c-fg: 229 231 235;
+  --c-muted: 148 163 184;
+  --c-side: 11 16 25;
+  color-scheme: dark;
+}
+
+@layer base {
+  html { font-family: theme("fontFamily.sans"); -webkit-text-size-adjust: 100%; }
+  body { @apply bg-app text-fg antialiased; }
+  [x-cloak] { display: none !important; }
+  /* عناصر الـ grid لازم تقدر تضيق (مثلاً جدول عريض جوه كارت ما يوسّعش الصفحة على الموبايل) */
+  .grid > *, .flex > .min-w-0 { min-width: 0; }
+  ::selection { background: rgb(16 185 129 / 0.25); }
+  /* سكرول ناعم */
+  * { scrollbar-width: thin; scrollbar-color: rgb(148 163 184 / .45) transparent; }
+}
+
+@layer components {
+  .card { @apply bg-card border border-line rounded-2xl shadow-card; }
+  .card-pad { @apply p-5; }
+
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 h-10 text-sm font-medium whitespace-nowrap transition
+    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 disabled:opacity-50 disabled:pointer-events-none; }
+  .btn-primary { @apply bg-brand-500 text-white hover:bg-brand-600 shadow-sm; }
+  .btn-outline { @apply border border-line bg-card text-fg hover:bg-soft; }
+  .btn-ghost { @apply text-muted hover:bg-soft hover:text-fg; }
+  .btn-danger { @apply bg-red-500 text-white hover:bg-red-600; }
+  .btn-sm { @apply h-8 px-3 text-[13px] rounded-lg; }
+  .btn-icon { @apply h-10 w-10 px-0; }
+
+  .input { @apply h-10 w-full rounded-xl border border-line bg-card px-3 text-sm text-fg outline-none transition
+    placeholder:text-muted/70 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20; }
+  .label { @apply mb-1.5 block text-[13px] font-medium text-muted; }
+
+  .badge { @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium; }
+  .badge-ok { @apply bg-brand-500/10 text-brand-700 dark:text-brand-300; }
+  .badge-warn { @apply bg-amber-500/10 text-amber-700 dark:text-amber-300; }
+  .badge-bad { @apply bg-red-500/10 text-red-700 dark:text-red-300; }
+  .badge-info { @apply bg-blue-500/10 text-blue-700 dark:text-blue-300; }
+  .badge-mute { @apply bg-slate-500/10 text-muted; }
+
+  .tbl { @apply w-full text-sm; }
+  .tbl thead th { @apply bg-soft px-4 py-3 text-start text-xs font-medium text-muted whitespace-nowrap first:rounded-s-lg last:rounded-e-lg; }
+  .tbl tbody td { @apply px-4 py-3 border-b border-line/70 whitespace-nowrap; }
+  .tbl tbody tr:last-child td { @apply border-b-0; }
+  .tbl tbody tr { @apply transition-colors hover:bg-soft/70; }
+
+  .modal { @apply fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4; }
+  .modal-backdrop { @apply absolute inset-0 bg-ink-950/55 backdrop-blur-[2px]; }
+  .modal-panel { @apply relative flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-line bg-card shadow-pop sm:rounded-2xl; }
+  .modal-head { @apply flex items-center justify-between gap-3 border-b border-line px-5 py-4; }
+  .modal-body { @apply flex-1 overflow-y-auto px-5 py-4; }
+  .modal-foot { @apply flex items-center justify-end gap-2 border-t border-line bg-soft/60 px-5 py-3; }
+
+  .seg { @apply inline-flex rounded-xl border border-line bg-soft p-1; }
+  .seg-btn { @apply inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-[13px] font-medium text-muted transition; }
+  .seg-btn-on { @apply bg-card text-fg shadow-card; }
+
+  .tab { @apply relative inline-flex h-11 items-center gap-2 whitespace-nowrap px-4 text-sm font-medium text-muted transition hover:text-fg; }
+  .tab-on { @apply text-brand-600 dark:text-brand-400 after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:rounded-full after:bg-brand-500; }
+
+  .field-err { @apply mt-1 text-xs text-red-600 dark:text-red-400; }
+  .select { @apply input appearance-none bg-no-repeat pe-8; }
+  .kpi-label { @apply text-xs font-medium text-muted; }
+  .empty { @apply grid place-items-center py-14 text-center text-sm text-muted; }
+
+  .skeleton { @apply animate-pulse rounded-lg bg-line; }
+  .code-chip { @apply inline-flex items-center rounded-md bg-soft border border-line px-2 py-0.5 text-xs font-medium text-fg; direction: ltr; unicode-bidi: isolate; }
+}
+
+/* بيتشال بعد ما الـ shell يتركّب (بيمنع وميض المحتوى من غير سايدبار) */
+.shell-pending #shell { visibility: hidden; }
+
+@media print {
+  aside, header, .no-print { display: none !important; }
+  body { background: #fff !important; color: #000 !important; }
+  .card { box-shadow: none !important; border-color: #ddd !important; }
+}
+
+/* ---------- انتقال سلس بين الوضع الليلي والنهاري ---------- */
+::view-transition-old(root), ::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
+::view-transition-old(root) { z-index: 1; }
+::view-transition-new(root) { z-index: 2; }
+.theme-fade, .theme-fade *, .theme-fade *::before, .theme-fade *::after {
+  transition: background-color .35s ease, border-color .35s ease, color .35s ease, fill .35s ease, stroke .35s ease !important;
+}
+@media (prefers-reduced-motion: reduce) { .theme-fade, .theme-fade * { transition: none !important; } }
+
+@layer components {
+  .toast { @apply pointer-events-auto flex items-start gap-3 rounded-xl border px-4 py-3 text-sm shadow-pop; }
+  .toast-ok { @apply border-brand-200 bg-brand-50 text-brand-900 dark:border-brand-500/40 dark:bg-brand-950 dark:text-brand-100; }
+  .toast-err { @apply border-red-200 bg-red-50 text-red-800 dark:border-red-500/40 dark:bg-red-950 dark:text-red-100; }
+  .loc-pop { @apply fixed z-[90] w-72 rounded-xl border border-line bg-card p-3 text-sm shadow-pop; }
+}

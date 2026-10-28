@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>البحث عن موقع | مخزني</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="js/theme-init.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+</head>
+<body>
+<noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
+
+<div id="shell" data-active="lookup" data-title="البحث عن موقع">
+  <div x-data="lookup" class="space-y-5">
+
+    <div>
+      <h1 class="text-2xl font-bold">البحث عن موقع</h1>
+      <p class="mt-1 text-sm text-muted">شوف إيه الموجود في أي مخزن أو رف، بإجمالي الكميات وتفصيلها.</p>
+    </div>
+
+    <section class="card card-pad">
+      <div class="grid gap-3 md:grid-cols-2">
+        <div><label class="label">اختار مخزن أو موقع</label>
+          <ui-select x-ref="nodeSel" source="all-nodes" placeholder="كل المخازن" clearable @pick="pickNode($event.detail.option)"></ui-select></div>
+        <form @submit.prevent="byCode()"><label class="label" for="code">أو اكتب الكود الكامل</label>
+          <div class="flex gap-2"><input id="code" type="text" class="input uppercase" dir="ltr" placeholder="W1-F3-R5" x-model.trim="code"><button type="submit" class="btn btn-primary shrink-0" :disabled="resolving"><i class="fa-solid fa-magnifying-glass"></i>بحث</button></div></form>
+      </div>
+      <p class="field-err" x-show="codeError" x-text="codeError"></p>
+    </section>
+
+    <!-- مسار الموقع -->
+    <nav class="flex flex-wrap items-center gap-1.5 text-sm" aria-label="المسار">
+      <button type="button" class="badge badge-mute hover:bg-line" @click="reset()"><i class="fa-solid fa-warehouse"></i>كل المخازن</button>
+      <template x-for="c in crumbs" :key="c"><span class="inline-flex items-center gap-1.5"><i class="fa-solid fa-chevron-left text-[9px] text-muted"></i>
+        <button type="button" class="code-chip hover:border-brand-500" @click="goCode(c)" x-text="c"></button></span></template>
+    </nav>
+
+    <div class="grid gap-4 sm:grid-cols-3">
+      <div class="card card-pad"><div class="kpi-label">إجمالي الكمية</div><div class="mt-1 text-3xl font-bold tabular-nums" x-text="data ? num(data.totals.quantity) : '—'"></div></div>
+      <div class="card card-pad"><div class="kpi-label">عدد الأصناف</div><div class="mt-1 text-3xl font-bold tabular-nums" x-text="data ? num(data.totals.products_count) : '—'"></div></div>
+      <div class="card card-pad" x-show="admin"><div class="kpi-label">قيمة المخزون <span class="badge badge-mute !py-0 text-[10px]"><i class="fa-solid fa-lock"></i> أدمن</span></div><div class="mt-1 text-3xl font-bold tabular-nums" x-text="data && data.totals.value != null ? money(data.totals.value) : '—'"></div></div>
+    </div>
+
+    <div class="grid gap-5 xl:grid-cols-12">
+      <!-- التفصيل -->
+      <section class="card card-pad xl:col-span-4">
+        <h2 class="mb-1 text-base font-bold">التفصيل حسب المستوى</h2><p class="mb-4 text-xs text-muted">اضغط على أي مستوى للدخول فيه</p>
+        <div class="space-y-3" x-show="loading && !data"><template x-for="i in 4"><div class="skeleton h-12"></div></template></div>
+        <ul class="space-y-2">
+          <template x-for="b in (data ? data.breakdown : [])" :key="b.key">
+            <li><button type="button" class="block w-full rounded-xl border border-line p-3 text-start transition hover:border-brand-500/50 hover:bg-soft" @click="goCode(b.key)">
+              <div class="flex items-center justify-between gap-2 text-sm"><span class="truncate font-medium" x-text="b.label"></span><b class="tabular-nums" x-text="num(b.quantity)"></b></div>
+              <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-line"><div class="h-full rounded-full bg-brand-500" :style="{ width: share(b) + '%' }"></div></div>
+              <div class="mt-1.5 flex justify-between text-xs text-muted"><span x-text="num(b.products_count) + ' صنف'"></span><span x-show="b.value != null" x-text="money(b.value)"></span></div></button></li>
+          </template>
+        </ul>
+        <p class="empty !py-8" x-show="data && !data.breakdown.length">مفيش بضاعة هنا.</p>
+        <ui-pager :page="bd.page" :pages="bd.pages" :total="bd.total" :size="bd.size" @go="bd.page = $event.detail; load()"></ui-pager>
+      </section>
+
+      <!-- المنتجات -->
+      <section class="card xl:col-span-8">
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-line p-5"><h2 class="text-base font-bold">المنتجات الموجودة</h2>
+          <input type="search" class="input h-9 w-48 text-[13px]" placeholder="بحث في المنتجات..." x-model="search" @input.debounce.350ms="page = 1; load()" aria-label="بحث في المنتجات">
+          <button type="button" class="btn btn-outline btn-sm" @click="exportCsv()" x-show="data && data.items.length"><i class="fa-solid fa-file-csv"></i>CSV</button></div>
+        <div class="overflow-x-auto px-3 pt-2">
+          <table class="tbl"><thead><tr><th>المنتج</th><th>الكمية</th><th>الأماكن</th><th x-show="admin">القيمة</th></tr></thead>
+            <tbody>
+              <template x-if="loading && !data"><template x-for="i in 6"><tr><td colspan="4"><div class="skeleton h-7"></div></td></tr></template></template>
+              <template x-for="p in (data ? data.items : [])" :key="p.product_id">
+                <tr :class="loading && 'opacity-60'"><td><a :href="'products.html#search=' + encodeURIComponent(p.sku || p.name)" class="font-medium hover:text-brand-600" x-text="p.name"></a><div class="text-xs text-muted" x-text="p.sku || ''"></div></td>
+                  <td><b class="tabular-nums" x-text="num(p.quantity)"></b> <span class="text-xs text-muted" x-text="p.unit"></span></td>
+                  <td><div class="space-y-1"><template x-for="l in p.location_items.slice(0, 3)" :key="l.full_code"><div class="flex h-6 items-center gap-2"><loc-code :code="l.full_code"></loc-code><span class="text-xs font-bold tabular-nums" x-text="'× ' + num(l.quantity)"></span></div></template>
+                    <div class="h-6 text-xs text-muted" x-show="p.location_items.length > 3" x-text="'+' + (p.location_items.length - 3) + ' أماكن أخرى'"></div></div></td>
+                  <td class="tabular-nums" x-show="admin" x-text="p.value != null ? money(p.value) : '—'"></td></tr>
+              </template>
+            </tbody></table>
+          <div class="empty" x-show="data && !data.items.length" x-cloak><i class="fa-solid fa-box-open mb-3 text-4xl opacity-40"></i>مفيش منتجات في النطاق ده</div>
+          <div class="empty" x-show="error" x-cloak><p class="mb-3 text-red-500" x-text="error"></p><button type="button" class="btn btn-outline btn-sm" @click="load()">إعادة المحاولة</button></div>
+        </div>
+        <div class="border-t border-line px-4"><ui-pager :page="page" :pages="pages" :total="total" :size="size" @go="page = $event.detail; load()"></ui-pager></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/layout.js"></script>
+<script type="module" src="js/lookup.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
+</body>
+</html>

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>تفاصيل الفاتورة | مخزني</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="js/theme-init.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+</head>
+<body>
+<noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
+
+<div id="shell" data-active="movements" data-title="تفاصيل الفاتورة">
+  <div x-data="invoice" class="mx-auto max-w-4xl space-y-5">
+
+    <div class="no-print flex flex-wrap items-center justify-between gap-3">
+      <a href="movements.html" class="btn btn-ghost"><i class="fa-solid fa-arrow-right"></i>رجوع للسجل</a>
+      <div class="flex flex-wrap items-center gap-2" x-show="inv" x-cloak>
+        <template x-if="isHeld">
+          <span class="flex flex-wrap items-center gap-2">
+            <button type="button" class="btn btn-primary" @click="complete()" :disabled="busy"><i class="fa-solid fa-circle-check"></i>إتمام الفاتورة</button>
+            <a :href="'stock-out.html#edit=' + id" class="btn btn-outline"><i class="fa-solid fa-pen"></i>تعديل</a>
+            <button type="button" class="btn btn-outline text-red-600" @click="remove()" :disabled="busy"><i class="fa-solid fa-trash-can"></i>مسح</button>
+          </span>
+        </template>
+        <a :href="'invoice-print.html#kind=' + kind + '&id=' + id" class="btn btn-outline"><i class="fa-solid fa-print"></i>طباعة</a>
+      </div>
+    </div>
+
+    <div x-show="loading" class="card card-pad space-y-4"><div class="skeleton h-8 w-1/3"></div><div class="skeleton h-24"></div><div class="skeleton h-40"></div></div>
+    <div x-show="error" x-cloak class="card empty"><p class="mb-3 text-red-500" x-text="error"></p><button type="button" class="btn btn-outline btn-sm" @click="load()">إعادة المحاولة</button></div>
+
+    <article x-show="inv" x-cloak class="card overflow-hidden">
+      <div class="h-1.5" :class="kind === 'in' ? 'bg-brand-500' : 'bg-orange-500'"></div>
+      <header class="flex flex-wrap items-start justify-between gap-4 p-6">
+        <div class="flex items-center gap-4">
+          <span class="grid h-14 w-14 place-items-center rounded-2xl text-2xl" :class="meta.tile"><i class="fa-solid" :class="meta.icon"></i></span>
+          <div><div class="text-sm text-muted" x-text="kind === 'in' ? 'فاتورة وارد' : 'فاتورة صادر'"></div>
+            <h1 class="flex items-center gap-2 text-2xl font-bold"><span x-text="'#' + (inv && inv.id)"></span><span x-show="isHeld" x-cloak class="badge badge-warn text-xs">معلّقة</span></h1></div>
+        </div>
+        <div class="text-end text-sm"><div class="text-muted">التاريخ</div><div class="font-medium" x-text="inv && fmtDateTime(inv.date)"></div></div>
+      </header>
+
+      <dl class="grid gap-4 border-y border-line bg-soft/60 p-6 sm:grid-cols-3">
+        <div><dt class="kpi-label" x-text="kind === 'in' ? 'المورد' : 'الجهة المستلمة'"></dt><dd class="mt-1 font-medium" x-text="partyName || 'غير محدد'"></dd></div>
+        <div><dt class="kpi-label" x-text="kind === 'in' ? 'استلمها' : 'سلّمها'"></dt><dd class="mt-1 font-medium" x-text="userName || '—'"></dd></div>
+        <div><dt class="kpi-label">ملاحظات</dt><dd class="mt-1 text-sm" x-text="(inv && inv.notes) || '—'"></dd></div>
+      </dl>
+
+      <div class="overflow-x-auto p-3">
+        <table class="tbl">
+          <thead><tr><th class="w-10">#</th><th>المنتج</th><th>المكان</th><th>الكمية</th><th>سعر الوحدة</th><th class="text-end">الإجمالي</th></tr></thead>
+          <tbody>
+            <template x-for="(it, i) in (inv ? inv.items : [])" :key="it.id">
+              <tr><td class="text-muted" x-text="i + 1"></td><td class="font-medium" x-text="it.product_name"></td>
+                <td><loc-code x-show="it.location_code" :code="it.location_code"></loc-code><span x-show="!it.location_code" class="text-muted">—</span></td>
+                <td class="tabular-nums" x-text="num(it.quantity)"></td><td class="tabular-nums" x-text="it.unit_price != null ? money(it.unit_price) : '—'"></td>
+                <td class="text-end font-medium tabular-nums" x-text="money((it.unit_price || 0) * it.quantity)"></td></tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+
+      <footer class="flex flex-wrap items-center justify-between gap-4 border-t border-line bg-soft/60 p-6">
+        <div class="text-sm text-muted"><span x-text="inv && inv.items.length"></span> صنف · إجمالي الكمية <b class="text-fg tabular-nums" x-text="num(totalQty)"></b></div>
+        <div class="text-end">
+          <dl class="mb-2 space-y-1 text-sm" x-show="hasAdj" x-cloak>
+            <div class="flex justify-between gap-8"><dt class="text-muted">الإجمالي الفرعي</dt><dd class="tabular-nums" x-text="inv && money(inv.subtotal)"></dd></div>
+            <div class="flex justify-between gap-8" x-show="inv && inv.discount_amount > 0"><dt class="text-muted" x-text="adjLabel('الخصم', inv && inv.discount_type, inv && inv.discount_value)"></dt><dd class="tabular-nums" x-text="inv && money(inv.discount_amount)"></dd></div>
+            <div class="flex justify-between gap-8" x-show="inv && inv.tax_amount > 0"><dt class="text-muted" x-text="adjLabel('الضريبة', inv && inv.tax_type, inv && inv.tax_value)"></dt><dd class="tabular-nums" x-text="inv && money(inv.tax_amount)"></dd></div>
+          </dl>
+          <div class="kpi-label" x-text="hasAdj ? 'الإجمالي النهائي' : 'إجمالي الفاتورة'"></div><div class="text-2xl font-bold tabular-nums" x-text="inv && money(finalTotal)"></div>
+        </div>
+      </footer>
+    </article>
+  </div>
+</div>
+
+<script type="module" src="js/layout.js"></script>
+<script type="module" src="js/invoice.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
+</body>
+</html>

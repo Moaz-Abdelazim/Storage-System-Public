@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>الموردين | مخزني</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="js/theme-init.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+</head>
+<body>
+<noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
+
+<div id="shell" data-active="suppliers" data-title="الموردين">
+  <div x-data="suppliers" class="space-y-5">
+
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div><h1 class="text-2xl font-bold">الموردين</h1><p class="mt-1 text-sm text-muted">الجهات اللي بتورّد لك بضاعة وسجل التعامل معاها</p></div>
+      <button type="button" class="btn btn-primary" @click="openForm()"><i class="fa-solid fa-plus"></i>إضافة مورد</button>
+    </div>
+
+    <div class="grid gap-4 sm:grid-cols-3">
+      <div class="card card-pad flex items-center gap-4"><span class="grid h-12 w-12 place-items-center rounded-2xl bg-brand-500/10 text-xl text-brand-600"><i class="fa-solid fa-truck-field"></i></span><div><div class="kpi-label">عدد الالموردين</div><div class="text-2xl font-bold tabular-nums" x-text="total"></div></div></div>
+      <div class="card card-pad flex items-center gap-4"><span class="grid h-12 w-12 place-items-center rounded-2xl bg-blue-500/10 text-xl text-blue-600"><i class="fa-solid fa-file-invoice"></i></span><div><div class="kpi-label">إجمالي الفواتير</div><div class="text-2xl font-bold tabular-nums" x-text="num(totalInvoices)"></div></div></div>
+      <div class="card card-pad"><label class="label" for="q">بحث</label><div class="relative"><i class="fa-solid fa-magnifying-glass pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-sm text-muted"></i><input id="q" type="search" class="input ps-10" placeholder="الاسم أو الهاتف..." x-model="search" @input.debounce.350ms="apply()"></div></div>
+    </div>
+
+    <section class="card">
+      <div class="overflow-x-auto p-3">
+        <table class="tbl">
+          <thead><tr><th>الاسم</th><th>الهاتف</th><th>العنوان</th><th>عدد الفواتير</th><th>إجمالي الكمية</th><th class="w-1"></th></tr></thead>
+          <tbody>
+            <template x-if="loading && !rows.length"><template x-for="i in 6"><tr><td colspan="6"><div class="skeleton h-7"></div></td></tr></template></template>
+            <template x-for="r in rows" :key="r.id">
+              <tr>
+                <td><button type="button" class="font-medium hover:text-brand-600" @click="openDetail(r)" x-text="r.name"></button><div class="max-w-[240px] truncate text-xs text-muted" x-show="r.notes" x-text="r.notes"></div></td>
+                <td dir="ltr" class="text-end tabular-nums text-muted" x-text="r.phone || '—'"></td>
+                <td class="max-w-[220px] truncate text-muted" x-text="r.address || '—'"></td>
+                <td><span class="badge badge-info" x-text="num(r.invoices_count)"></span></td>
+                <td class="tabular-nums" x-text="num(r.total_quantity)"></td>
+                <td><div class="flex items-center gap-0.5">
+                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="المنتجات والفواتير" @click="openDetail(r)"><i class="fa-regular fa-eye"></i></button>
+                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تعديل" @click="openForm(r)"><i class="fa-solid fa-pen"></i></button>
+                  <template x-if="admin"><button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8 text-red-500" title="حذف" @click="remove(r)"><i class="fa-solid fa-trash-can"></i></button></template>
+                </div></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <div class="empty" x-show="!loading && !error && !rows.length" x-cloak><i class="fa-solid fa-truck-field mb-3 text-4xl opacity-40"></i>مفيش الموردين مطابقين</div>
+        <div class="empty" x-show="error" x-cloak><p class="mb-3 text-red-500" x-text="error"></p><button type="button" class="btn btn-outline btn-sm" @click="load()">إعادة المحاولة</button></div>
+      </div>
+      <div class="border-t border-line px-4"><ui-pager :page="page" :pages="pages" :total="total" :size="size" @go="page = $event.detail; load()"></ui-pager></div>
+    </section>
+
+    <!-- إضافة / تعديل -->
+    <div x-show="form.open" x-cloak x-transition.opacity class="modal" role="dialog" aria-modal="true" @keydown.escape.window="form.open = false">
+      <div class="modal-backdrop" @click="form.open = false"></div>
+      <form class="modal-panel max-w-md" @submit.prevent="save()" novalidate>
+        <div class="modal-head"><h2 class="text-lg font-bold" x-text="form.id ? 'تعديل مورد' : 'إضافة مورد جديد'"></h2><button type="button" class="btn btn-ghost btn-icon btn-sm" @click="form.open = false" aria-label="إغلاق"><i class="fa-solid fa-xmark"></i></button></div>
+        <div class="modal-body space-y-4">
+          <div><label class="label">الاسم *</label><input type="text" class="input" x-model.trim="form.name" maxlength="150"></div>
+          <div><label class="label">رقم الهاتف</label><input type="tel" class="input" dir="ltr" x-model.trim="form.phone" maxlength="30"></div>
+          <div><label class="label">العنوان</label><input type="text" class="input" x-model.trim="form.address" maxlength="255"></div>
+          <div><label class="label">ملاحظات</label><textarea class="input h-20 py-2" x-model.trim="form.notes" maxlength="500"></textarea></div>
+          <p class="field-err" x-show="form.error" x-text="form.error"></p>
+        </div>
+        <div class="modal-foot"><button type="button" class="btn btn-outline" @click="form.open = false">إلغاء</button><button type="submit" class="btn btn-primary" :disabled="form.saving"><i class="fa-solid fa-spinner animate-spin" x-show="form.saving"></i>حفظ</button></div>
+      </form>
+    </div>
+
+    <!-- التفاصيل -->
+    <div x-show="detail.open" x-cloak x-transition.opacity class="modal" role="dialog" aria-modal="true" @keydown.escape.window="detail.open = false">
+      <div class="modal-backdrop" @click="detail.open = false"></div>
+      <div class="modal-panel max-w-3xl">
+        <div class="modal-head"><div><h2 class="text-lg font-bold" x-text="detail.party && detail.party.name"></h2><p class="text-xs text-muted" dir="ltr" x-text="detail.party && detail.party.phone"></p></div>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" @click="detail.open = false" aria-label="إغلاق"><i class="fa-solid fa-xmark"></i></button></div>
+        <div class="border-b border-line p-4"><div class="relative"><i class="fa-solid fa-magnifying-glass pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-sm text-muted"></i>
+          <input type="search" class="input ps-10" placeholder="ابحث في المنتجات..." x-model="detail.search" @input.debounce.300ms="detail.openId = null; loadProducts(1)"></div></div>
+        <div class="modal-body">
+          <div x-show="detail.loading" class="space-y-2"><template x-for="i in 4"><div class="skeleton h-10"></div></template></div>
+          <ul class="divide-y divide-line" x-show="!detail.loading">
+            <template x-for="p in detail.products.items" :key="p.product_id">
+              <li>
+                <button type="button" class="flex w-full items-center justify-between gap-3 py-3 text-start" @click="toggleProduct(p)">
+                  <span class="min-w-0"><span class="block truncate font-medium" x-text="p.product_name"></span><span class="text-xs text-muted" x-text="(p.sku ? p.sku + ' · ' : '') + num(p.invoices_count) + ' فاتورة'"></span></span>
+                  <span class="flex items-center gap-3"><b class="tabular-nums" x-text="num(p.total_quantity)"></b><i class="fa-solid fa-chevron-down text-[10px] text-muted transition-transform" :class="detail.openId === p.product_id && 'rotate-180'"></i></span></button>
+                <div x-show="detail.openId === p.product_id" x-cloak class="mb-3 rounded-xl bg-soft p-2">
+                  <div x-show="detail.invLoading" class="skeleton h-8"></div>
+                  <div class="overflow-x-auto" x-show="!detail.invLoading"><table class="tbl"><thead><tr><th>الفاتورة</th><th>التاريخ</th><th>الكمية</th><th>السعر</th><th>بواسطة</th></tr></thead>
+                    <tbody><template x-for="v in detail.invoices.items" :key="v.invoice_id + '-' + v.date">
+                      <tr><td><a :href="'invoice.html#kind=in&id=' + v.invoice_id" class="font-medium text-brand-600 hover:underline" x-text="'#' + v.invoice_id"></a></td><td class="text-muted" x-text="fmtDateTime(v.date)"></td>
+                        <td class="tabular-nums" x-text="num(v.quantity)"></td><td class="tabular-nums" x-text="v.unit_price != null ? money(v.unit_price) : '—'"></td><td class="text-muted" x-text="v.user_name || '—'"></td></tr></template></tbody></table></div>
+                  <ui-pager :page="detail.invoices.page" :pages="detail.invoices.total_pages" :total="detail.invoices.total" :size="detail.invoices.page_size" @go="loadInvoices($event.detail)"></ui-pager>
+                </div>
+              </li>
+            </template>
+          </ul>
+          <p class="empty" x-show="!detail.loading && !detail.products.items.length">مفيش منتجات مسجلة.</p>
+          <ui-pager :page="detail.products.page" :pages="detail.products.total_pages" :total="detail.products.total" :size="detail.products.page_size" @go="detail.openId = null; loadProducts($event.detail)"></ui-pager>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/layout.js"></script>
+<script type="module" src="js/suppliers.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
+</body>
+</html>
