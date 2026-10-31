@@ -16,7 +16,7 @@
 <body>
 <noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
 
-<div id="shell" data-active="users" data-title="المستخدمين" data-admin-only>
+<div id="shell" data-perm="users.manage" data-active="users" data-title="المستخدمين">
   <div x-data="users" class="space-y-5">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div><h1 class="text-2xl font-bold">المستخدمين</h1><p class="mt-1 text-sm text-muted">إدارة حسابات الفريق وصلاحياتهم</p></div>
@@ -35,13 +35,14 @@
 
     <div class="card card-pad flex flex-wrap items-center gap-3">
       <div class="relative min-w-[220px] flex-1"><i class="fa-solid fa-magnifying-glass pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-sm text-muted"></i><input type="search" class="input ps-10" placeholder="اسم المستخدم أو الاسم الكامل..." x-model="f.search" @input.debounce.350ms="apply()" aria-label="بحث"></div>
-      <span class="badge badge-info" x-show="f.role || f.status" x-cloak><span x-text="filterLabel"></span><button type="button" class="ms-1" @click="clearFilter()" aria-label="إلغاء الفلتر"><i class="fa-solid fa-xmark"></i></button></span>
+      <select class="input w-auto" x-model="f.role_id" @change="apply()" aria-label="الدور"><option value="">كل الأدوار</option><template x-for="r in roles" :key="r.id"><option :value="String(r.id)" x-text="r.name"></option></template></select>
+      <span class="badge badge-info" x-show="f.role_id || f.status" x-cloak><span x-text="filterLabel"></span><button type="button" class="ms-1" @click="clearFilter()" aria-label="إلغاء الفلتر"><i class="fa-solid fa-xmark"></i></button></span>
     </div>
 
     <section class="card">
       <div class="overflow-x-auto p-3">
         <table class="tbl">
-          <thead><tr><th>المستخدم</th><th>الصلاحية</th><th>الحالة</th><th>تاريخ الإنشاء</th><th class="w-1"></th></tr></thead>
+          <thead><tr><th>المستخدم</th><th>الدور</th><th>الحالة</th><th>تاريخ الإنشاء</th><th class="w-1"></th></tr></thead>
           <tbody>
             <template x-if="loading && !rows.length"><template x-for="i in 5"><tr><td colspan="5"><div class="skeleton h-9"></div></td></tr></template></template>
             <template x-for="u in rows" :key="u.id">
@@ -49,13 +50,13 @@
                 <td><div class="flex items-center gap-3"><span class="grid h-9 w-9 place-items-center rounded-full bg-brand-500/15 text-sm font-bold text-brand-700 dark:text-brand-300" x-text="(u.full_name || u.username).charAt(0).toUpperCase()"></span>
                   <div><div class="font-medium" x-text="u.full_name || u.username"></div><div class="text-xs text-muted" dir="ltr" x-text="'@' + u.username"></div></div>
                   <span class="badge badge-info" x-show="u.username === me">أنت</span></div></td>
-                <td><span class="badge" :class="u.role === 'admin' ? 'bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'badge-mute'" x-text="u.role === 'admin' ? 'مدير النظام' : 'موظف مخازن'"></span></td>
+                <td><span class="badge" :class="u.is_admin ? 'bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'badge-mute'" x-text="u.role_name"></span></td>
                 <td><span class="badge" :class="u.is_active ? 'badge-ok' : 'badge-bad'" x-text="u.is_active ? 'نشط' : 'موقوف'"></span></td>
                 <td class="text-muted" x-text="u.created_at ? fmtDate(u.created_at) : '—'"></td>
                 <td><div class="flex items-center gap-0.5">
-                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تعديل" @click="openForm(u)"><i class="fa-solid fa-pen"></i></button>
-                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" :title="u.is_active ? 'إيقاف' : 'تفعيل'" @click="toggleActive(u)" :disabled="u.username === me"><i class="fa-solid" :class="u.is_active ? 'fa-toggle-on text-brand-500' : 'fa-toggle-off'"></i></button>
-                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8 text-red-500" title="حذف" @click="remove(u)" :disabled="u.username === me"><i class="fa-solid fa-trash-can"></i></button>
+                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تعديل" @click="openForm(u)" x-show="canTouch(u)"><i class="fa-solid fa-pen"></i></button>
+                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" :title="u.is_active ? 'إيقاف' : 'تفعيل'" @click="toggleActive(u)" :disabled="u.username === me" x-show="canTouch(u)"><i class="fa-solid" :class="u.is_active ? 'fa-toggle-on text-brand-500' : 'fa-toggle-off'"></i></button>
+                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8 text-red-500" title="حذف" @click="remove(u)" :disabled="u.username === me" x-show="canTouch(u)"><i class="fa-solid fa-trash-can"></i></button>
                 </div></td>
               </tr>
             </template>
@@ -75,10 +76,10 @@
           <div><label class="label">الاسم الكامل</label><input type="text" class="input" x-model.trim="form.full_name" maxlength="100"></div>
           <div><label class="label">اسم المستخدم *</label><input type="text" class="input" dir="ltr" x-model.trim="form.username" maxlength="50" autocomplete="off"></div>
           <div><label class="label" x-text="form.id ? 'كلمة مرور جديدة (سيبها فاضية لو مش هتغيّر)' : 'كلمة المرور *'"></label>
-            <input type="password" class="input" x-model="form.password" autocomplete="new-password" placeholder="6 حروف على الأقل"><p class="mt-1 text-xs text-muted" x-show="form.id">تغيير كلمة المرور بيقفل كل جلسات المستخدم المفتوحة.</p></div>
-          <div><label class="label">الصلاحية</label>
-            <div class="seg w-full"><button type="button" class="seg-btn flex-1 justify-center" :class="form.role === 'staff' && 'seg-btn-on'" @click="form.role = 'staff'">موظف مخازن</button>
-              <button type="button" class="seg-btn flex-1 justify-center" :class="form.role === 'admin' && 'seg-btn-on'" @click="form.role = 'admin'">مدير النظام</button></div></div>
+            <input type="password" class="input" x-model="form.password" autocomplete="new-password" placeholder="8 حروف على الأقل"><p class="mt-1 text-xs text-muted" x-show="form.id">تغيير كلمة المرور بيقفل كل جلسات المستخدم المفتوحة.</p></div>
+          <div><label class="label">الدور *</label>
+            <select class="input" x-model.number="form.role_id" :disabled="form.id && form.id === (rows.find(r => r.username === me) || {}).id && !iAmAdmin"><option value="">اختار الدور...</option><template x-for="r in roles" :key="r.id"><option :value="r.id" x-text="r.name + (r.is_system ? ' (كل الصلاحيات)' : '')"></option></template></select>
+            <p class="mt-1 text-xs text-muted">الأدوار بتتحدد من صفحة «الأدوار والصلاحيات». تغيير الدور بيسري فورًا.</p></div>
           <p class="field-err" x-show="form.error" x-text="form.error"></p>
         </div>
         <div class="modal-foot"><button type="button" class="btn btn-outline" @click="form.open = false">إلغاء</button><button type="submit" class="btn btn-primary" :disabled="form.saving"><i class="fa-solid fa-spinner animate-spin" x-show="form.saving"></i>حفظ</button></div>

@@ -1,47 +1,58 @@
 // =====================================================================
 //  layout.js — الـ Shell المشترك (سايدبار + شريط علوي + Toasts).
 //  كل صفحة بتحط محتواها جوه:
-//     <div id="shell" data-active="dashboard" data-title="الرئيسية" [data-admin-only]> ...المحتوى... </div>
+//     <div id="shell" data-active="dashboard" data-title="الرئيسية" [data-perm="products.view,stock_in.create"] [data-admin-only]> ...المحتوى... </div>
+//  data-perm = أي صلاحية من المذكورين تفتح الصفحة (any-of) | data-admin-only = مدير النظام بس. (تلميحات؛ السيرفر هو اللي بيفرض)
 //  والملف ده بيلفّ المحتوى بالـ Shell. لازم يتحمّل قبل Alpine (ترتيب الـ scripts في الصفحة).
 // =====================================================================
-import { guard, getUser, isAdmin, logout, refreshMe } from "./auth.js";
+import { guard, getUser, can, isAdmin, logout, refreshMe } from "./auth.js";
 import { api } from "./api.js";
 import "./ui.js"; // <ui-select> و <ui-pager> و <loc-code> متاحين في كل الصفحات
 import { toggleTheme } from "./theme.js";
 
 // ---------- قايمة التنقل ----------
+// perm = أي صلاحية من القايمة تظهر العنصر (any-of) | adminOnly = مدير النظام بس. من غير أي منهم = لأي مسجّل.
 const NAV = [
   { id: "dashboard", label: "الرئيسية", icon: "fa-house", href: "index.html" },
   { group: "products", label: "المنتجات", icon: "fa-box", items: [
-    { id: "products", label: "كل المنتجات", href: "products.html" },
-    { id: "categories", label: "التصنيفات", href: "categories.html" },
-    { id: "brands", label: "الماركات", href: "brands.html" },
+    { id: "products", label: "كل المنتجات", href: "products.html", perm: ["products.view"] },
+    { id: "categories", label: "التصنيفات", href: "categories.html", perm: ["products.view"] },
+    { id: "brands", label: "الماركات", href: "brands.html", perm: ["products.view"] },
   ] },
   { group: "locations", label: "المخازن والمواقع", icon: "fa-location-dot", items: [
-    { id: "locations", label: "إدارة المواقع", href: "locations.html" },
-    { id: "transfers", label: "النقل بين المواقع", href: "transfers.html" },
-    { id: "lookup", label: "البحث عن موقع", href: "location-lookup.html" },
+    { id: "locations", label: "إدارة المواقع", href: "locations.html", perm: ["locations.view"] },
+    { id: "transfers", label: "النقل بين المواقع", href: "transfers.html", perm: ["transfers.view", "transfers.create"] },
+    { id: "lookup", label: "البحث عن موقع", href: "location-lookup.html", perm: ["locations.view"] },
   ] },
   { group: "stock", label: "حركة المخزون", icon: "fa-right-left", items: [
-    { id: "stock-in", label: "وارد (فاتورة دخول)", href: "stock-in.html" },
-    { id: "stock-out", label: "صادر (فاتورة خروج)", href: "stock-out.html" },
-    { id: "movements", label: "سجل الحركات", href: "movements.html" },
+    { id: "stock-in", label: "وارد (فاتورة دخول)", href: "stock-in.html", perm: ["stock_in.create"] },
+    { id: "stock-out", label: "صادر (فاتورة خروج)", href: "stock-out.html", perm: ["stock_out.create"] },
+    { id: "movements", label: "سجل الحركات", href: "movements.html", perm: ["invoices.view", "transfers.view"] },
   ] },
   { group: "parties", label: "الأطراف", icon: "fa-handshake", items: [
-    { id: "suppliers", label: "الموردين", href: "suppliers.html" },
-    { id: "recipients", label: "جهات الاستلام", href: "recipients.html" },
+    { id: "suppliers", label: "الموردين", href: "suppliers.html", perm: ["suppliers.view"] },
+    { id: "recipients", label: "جهات الاستلام", href: "recipients.html", perm: ["recipients.view"] },
   ] },
-  { id: "reports", label: "التقارير", icon: "fa-chart-column", href: "reports.html", admin: true },
-  { id: "users", label: "المستخدمين", icon: "fa-user-group", href: "users.html", admin: true },
-  { id: "login-logs", label: "سجل الدخول", icon: "fa-shield-halved", href: "login-logs.html", admin: true },
+  { id: "reports", label: "التقارير", icon: "fa-chart-column", href: "reports.html", perm: ["reports.view"] },
+  { group: "admin", label: "الإدارة", icon: "fa-user-gear", items: [
+    { id: "users", label: "المستخدمين", href: "users.html", perm: ["users.manage"] },
+    { id: "roles", label: "الأدوار والصلاحيات", href: "roles.html", adminOnly: true },
+    { id: "login-logs", label: "سجل الدخول", href: "login-logs.html", perm: ["logs.view"] },
+  ] },
 ];
+
+const allowed = (n) => (n.adminOnly ? isAdmin() : !n.perm || can(...n.perm));
 
 const LINK_BASE = "flex items-center gap-3 rounded-xl px-3.5 h-11 text-[15px] transition-colors";
 const LINK_ON = "bg-brand-500 text-white font-medium shadow-lg shadow-brand-500/25";
 const LINK_OFF = "text-slate-300 hover:bg-white/5 hover:text-white";
 
-function navHtml(active, admin) {
-  return NAV.filter((n) => !n.admin || admin).map((n) => {
+function navHtml(active) {
+  // مجموعة من غير ولا عنصر مسموح بيها بتختفي
+  const visible = NAV
+    .map((n) => (n.group ? { ...n, items: n.items.filter(allowed) } : n))
+    .filter((n) => (n.group ? n.items.length : allowed(n)));
+  return visible.map((n) => {
     if (!n.group) {
       const on = n.id === active;
       return `<a href="${n.href}" class="${LINK_BASE} ${on ? LINK_ON : LINK_OFF}" ${on ? 'aria-current="page"' : ""}>
@@ -63,7 +74,7 @@ function navHtml(active, admin) {
   }).join("");
 }
 
-function shellHtml(active, admin) {
+function shellHtml(active) {
   return `
   <div x-show="drawer" x-cloak x-transition.opacity class="fixed inset-0 z-30 bg-black/50 lg:hidden" @click="drawer = false"></div>
 
@@ -82,7 +93,7 @@ function shellHtml(active, admin) {
       </svg>
     </a>
 
-    <nav class="flex-1 space-y-1 overflow-y-auto px-3 py-3">${navHtml(active, admin)}</nav>
+    <nav class="flex-1 space-y-1 overflow-y-auto px-3 py-3">${navHtml(active)}</nav>
 
     <div class="space-y-1 border-t border-white/10 px-3 py-3">
       <a href="settings.html" class="${LINK_BASE} ${active === "settings" ? LINK_ON : LINK_OFF}">
@@ -179,6 +190,12 @@ function shellData() {
 
     init() {
       window.addEventListener("app-user", (e) => { this.user = e.detail; });
+      window.addEventListener("app-role-disabled", (e) => {
+        if (this._roleOff) return;
+        this._roleOff = true;
+        this.pushToast(e.detail || "الدور بتاعك موقوف، كلّم الأدمن", "error");
+        setTimeout(() => logout(), 2500);
+      });
       window.addEventListener("app-confirm", (e) => {
         const { resolve, ...opts } = e.detail;
         this._confirmResolve = resolve;
@@ -191,13 +208,13 @@ function shellData() {
     },
 
     get initial() { return (this.user.name || "?").trim().charAt(0).toUpperCase(); },
-    get roleLabel() { return this.user.role === "admin" ? "مدير النظام" : "موظف مخازن"; },
+    get roleLabel() { return this.user.role || (this.user.isAdmin ? "مدير النظام" : "مستخدم"); },
 
     async loadAlerts() {
       try {
         const s = await api.get("/api/reports/summary", { ttl: 30_000 });
         this.lowCount = s.low_stock_count || 0;
-      } catch (e) { /* التنبيه مش حرج */ }
+      } catch (e) { /* التنبيه مش حرج (ممكن 403 لو الدور موقوف) */ }
     },
 
     search() {
@@ -228,7 +245,8 @@ function shellData() {
 function mount() {
   const el = document.getElementById("shell");
   if (!el) return;
-  if (!guard({ adminOnly: el.hasAttribute("data-admin-only") })) return;
+  const perm = (el.dataset.perm || "").split(",").map((x) => x.trim()).filter(Boolean);
+  if (!guard({ adminOnly: el.hasAttribute("data-admin-only"), perm })) return;
 
   const title = el.dataset.title;
   if (title) document.title = `${title} | مخزني`;
@@ -238,7 +256,7 @@ function mount() {
 
   el.className = "min-h-screen lg:flex";
   el.setAttribute("x-data", "shell");
-  el.innerHTML = shellHtml(el.dataset.active || "", isAdmin());
+  el.innerHTML = shellHtml(el.dataset.active || "");
   el.querySelector("#page").appendChild(content);
 
   document.documentElement.classList.remove("shell-pending");

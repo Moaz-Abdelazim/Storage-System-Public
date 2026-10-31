@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
-from .. import models, auth
+from .. import models, auth, permissions
 from ..database import get_db
 from ..query_helpers import contains, end_exclusive, page_args, paged, parse_dt
 
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api/reports", tags=["Reports"])
 def summary(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     total_products = db.query(func.count(models.Product.id)).filter(models.Product.is_active.is_(True)).scalar() or 0
     total_quantity = db.query(func.sum(models.Product.quantity)).scalar() or 0
-    is_admin = current_user.role == "admin"
+    is_admin = permissions.has_permission(current_user, "finance.view")
     total_stock_value = (db.query(func.sum(models.Product.price * models.Product.quantity)).scalar() or 0) if is_admin else None
     low_stock_count = (
         db.query(func.count(models.Product.id))
@@ -42,7 +42,7 @@ def summary(db: Session = Depends(get_db), current_user: models.User = Depends(a
 
 
 @router.get("/out-totals")
-def out_totals(db: Session = Depends(get_db), admin: models.User = Depends(auth.require_admin)):
+def out_totals(db: Session = Depends(get_db), admin: models.User = Depends(auth.require_permission("finance.view"))):
     """
     إجمالي الصادر (كمية وقيمة) - النهاردة / الشهر الحالي / السنة الحالية،
     كل الحسابات بتوقيت القاهرة (زي باقي تواريخ النظام) وبتاخد لحد دلوقتي بالظبط.
@@ -77,13 +77,13 @@ def low_stock(
     page_size: int = 15,
     search: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("products.view")),
 ):
     """المنتجات تحت الحد الأدنى. مع page بيرجّع صفحة (items + total..)، ومن غيرها أول 200 بس (مفيش تحميل للكل)."""
     P = models.Product
     q = db.query(P).filter(P.quantity <= P.min_quantity, P.is_active.is_(True))
     if search and search.strip():
-        q = q.filter(contains(P.name, search) | contains(P.sku, search))
+        q = q.filter(contains(P.name, search) | contains(P.sku, search) | contains(P.barcode, search))
     q = q.order_by((P.quantity - P.min_quantity).asc(), P.name)
     to_row = lambda p: {"id": p.id, "sku": p.sku, "name": p.name, "quantity": p.quantity, "min_quantity": p.min_quantity}
     if page is None:
@@ -98,7 +98,7 @@ def movements(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("reports.view")),
 ):
     """
     تقرير حركة الوارد والصادر في فترة معينة. تاريخ النهاية (YYYY-MM-DD) شامل اليوم كله،
@@ -108,7 +108,7 @@ def movements(
     now = now_cairo()
     start = parse_dt(date_from, "تاريخ البداية") or now - timedelta(days=30)
     end_excl = end_exclusive(date_to) or now + timedelta(minutes=1)
-    is_admin = current_user.role == "admin"
+    is_admin = permissions.has_permission(current_user, "finance.view")
 
     def stats(inv, item):
         count = db.query(func.count(inv.id)).filter(inv.date >= start, inv.date < end_excl).scalar() or 0
@@ -141,7 +141,7 @@ def top_products(
     direction: str = "out",  # "out" = الأكثر صادرًا (طلبًا) / "in" = الأكثر واردًا
     limit: int = 10,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("reports.view")),
 ):
     """أعلى N منتج صادر أو وارد (حسب direction) - العدد N قابل للتحكم من limit."""
     limit = max(1, min(limit, 100))
@@ -176,7 +176,7 @@ def top_products(
 
 
 @router.get("/by-category")
-def by_category(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def by_category(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_permission("reports.view"))):
     """قيمة وكمية المخزون مقسّمة حسب التصنيف - مفيد للـ analysis."""
     rows = (
         db.query(
@@ -190,7 +190,7 @@ def by_category(db: Session = Depends(get_db), current_user: models.User = Depen
         .all()
     )
     result = [
-        {"category": r[0], "products_count": r[1], "total_quantity": r[2] or 0, "total_value": round(r[3] or 0, 2) if current_user.role == "admin" else None}
+        {"category": r[0], "products_count": r[1], "total_quantity": r[2] or 0, "total_value": round(r[3] or 0, 2) if permissions.has_permission(current_user, "finance.view") else None}
         for r in rows
     ]
     uncategorized_count = db.query(func.count(models.Product.id)).filter(models.Product.category_id.is_(None)).scalar() or 0
@@ -200,7 +200,7 @@ def by_category(db: Session = Depends(get_db), current_user: models.User = Depen
 
 
 @router.get("/by-brand")
-def by_brand(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def by_brand(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_permission("reports.view"))):
     """قيمة وكمية المخزون مقسّمة حسب الماركة - نفس فكرة by-category بالظبط."""
     rows = (
         db.query(
@@ -214,7 +214,7 @@ def by_brand(db: Session = Depends(get_db), current_user: models.User = Depends(
         .all()
     )
     result = [
-        {"brand": r[0], "products_count": r[1], "total_quantity": r[2] or 0, "total_value": round(r[3] or 0, 2) if current_user.role == "admin" else None}
+        {"brand": r[0], "products_count": r[1], "total_quantity": r[2] or 0, "total_value": round(r[3] or 0, 2) if permissions.has_permission(current_user, "finance.view") else None}
         for r in rows
     ]
     unbranded_count = db.query(func.count(models.Product.id)).filter(models.Product.brand_id.is_(None)).scalar() or 0
@@ -227,12 +227,13 @@ def by_brand(db: Session = Depends(get_db), current_user: models.User = Depends(
 def product_movements(
     product_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("invoices.view")),
 ):
     """كل حركات الوارد والصادر الخاصة بمنتج معين - تاريخ كامل."""
     product = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not product:
-        return {"error": "المنتج مش موجود"}
+        raise HTTPException(status_code=404, detail="المنتج مش موجود")
+    show_finance = permissions.has_permission(current_user, "finance.view")
 
     in_items = (
         db.query(models.StockInItem)
@@ -254,7 +255,7 @@ def product_movements(
             "invoice_id": it.invoice_id,
             "date": it.invoice.date,
             "quantity": it.quantity,
-            "unit_price": it.unit_price,
+            "unit_price": it.unit_price if show_finance else None,  # سعر الشراء: finance.view بس
             "party_name": it.invoice.supplier.name if it.invoice.supplier else None,
             "user_name": format_user_display(it.invoice.received_by, it.invoice.received_by_username),
             "notes": it.invoice.notes,
@@ -287,7 +288,7 @@ def product_movements(
 def top_suppliers(
     limit: int = 10,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("reports.view")),
 ):
     """أعلى N مورد (العدد N قابل للتحكم من limit)."""
     limit = max(1, min(limit, 100))
@@ -307,7 +308,7 @@ def top_suppliers(
         .all()
     )
     return [
-        {"supplier_id": r[0], "name": r[1], "total_quantity": r[2] or 0, "total_value": round(r[3] or 0, 2) if current_user.role == "admin" else None, "invoices_count": r[4]}
+        {"supplier_id": r[0], "name": r[1], "total_quantity": r[2] or 0, "total_value": round(r[3] or 0, 2) if permissions.has_permission(current_user, "finance.view") else None, "invoices_count": r[4]}
         for r in rows
     ]
 
@@ -316,7 +317,7 @@ def top_suppliers(
 def top_recipients(
     limit: int = 10,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("reports.view")),
 ):
     """أعلى N جهة استلام (العدد N قابل للتحكم من limit)."""
     limit = max(1, min(limit, 100))
@@ -336,7 +337,7 @@ def top_recipients(
         .all()
     )
     return [
-        {"recipient_id": r[0], "name": r[1], "total_quantity": r[2] or 0, "total_value": round(r[3] or 0, 2) if current_user.role == "admin" else None, "invoices_count": r[4]}
+        {"recipient_id": r[0], "name": r[1], "total_quantity": r[2] or 0, "total_value": round(r[3] or 0, 2) if permissions.has_permission(current_user, "finance.view") else None, "invoices_count": r[4]}
         for r in rows
     ]
 
@@ -367,7 +368,7 @@ def supplier_products(
     page: int = 1,
     page_size: int = 10,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("suppliers.view")),
 ):
     """المنتجات اللي المورد ده وردهالنا وكمية كل واحد (بترقيم)."""
     supplier = db.query(models.Supplier).filter(models.Supplier.id == supplier_id).first()
@@ -384,7 +385,7 @@ def supplier_product_invoices(
     page: int = 1,
     page_size: int = 10,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("suppliers.view")),
 ):
     """فواتير الوارد من مورد معين لمنتج معين (بترقيم)."""
     pg, size = page_args(page, page_size, default=10)
@@ -398,8 +399,10 @@ def supplier_product_invoices(
         q.options(joinedload(models.StockInItem.invoice).joinedload(models.StockInInvoice.received_by))
         .order_by(models.StockInInvoice.date.desc(), models.StockInItem.id.desc()).offset((pg - 1) * size).limit(size).all()
     )
+    show_finance = permissions.has_permission(current_user, "finance.view")
     return paged([
-        {"invoice_id": it.invoice_id, "date": it.invoice.date, "quantity": it.quantity, "unit_price": it.unit_price,
+        {"invoice_id": it.invoice_id, "date": it.invoice.date, "quantity": it.quantity,
+         "unit_price": it.unit_price if show_finance else None,  # سعر الشراء: finance.view بس
          "user_name": format_user_display(it.invoice.received_by, it.invoice.received_by_username), "notes": it.invoice.notes}
         for it in rows
     ], total, pg, size)
@@ -412,7 +415,7 @@ def recipient_products(
     page: int = 1,
     page_size: int = 10,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("recipients.view")),
 ):
     """المنتجات اللي صدّرناها للجهة دي وكمية كل واحد (بترقيم)."""
     recipient = db.query(models.Recipient).filter(models.Recipient.id == recipient_id).first()
@@ -429,7 +432,7 @@ def recipient_product_invoices(
     page: int = 1,
     page_size: int = 10,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("recipients.view")),
 ):
     """فواتير الصادر لجهة معينة لمنتج معين (بترقيم)."""
     pg, size = page_args(page, page_size, default=10)

@@ -27,8 +27,8 @@ from ..timezone_utils import now_cairo
 
 router = APIRouter(
     prefix="/api/analytics",
-    tags=["Analytics (Admin)"],
-    dependencies=[Depends(auth.require_admin)],
+    tags=["Analytics"],
+    dependencies=[Depends(auth.require_permission("reports.view", "finance.view"))],
 )
 
 P = models.Product

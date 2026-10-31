@@ -255,7 +255,7 @@ async function load() {
   }
 }
 
-if (guard({ adminOnly: true })) {
+if (guard({ perm: ["reports.view", "finance.view"] })) {
   $("#applyRange").addEventListener("click", () => {
     const f = $("#dFrom").value, t = $("#dTo").value;
     if (!f || !t) return alert("اختار تاريخ البداية والنهاية");

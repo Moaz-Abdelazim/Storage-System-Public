@@ -1,6 +1,6 @@
 // settings.js — الحساب والمظهر وتغيير كلمة المرور وتصدير/استيراد Excel
 import { api, download } from "./api.js";
-import { getUser, isAdmin } from "./auth.js";
+import { getUser, can } from "./auth.js";
 import { invalidateData } from "./data.js";
 import { toast, errMsg, confirmAction } from "./utils.js";
 import { API_BASE } from "./config.js";
@@ -10,7 +10,8 @@ const currentTheme = () => localStorage.getItem("theme") || "auto";
 
 document.addEventListener("alpine:init", () => {
   window.Alpine.data("settings", () => ({
-    admin: isAdmin(), user: getUser(),
+    canCompany: can("settings.company"), canImport: can("products.import"), user: getUser(),
+    canExport(x) { return can(x.perm); },
     theme: currentTheme(),
     themes: [{ key: "light", label: "نهاري", icon: "fa-sun" }, { key: "dark", label: "ليلي", icon: "fa-moon" }, { key: "auto", label: "تلقائي", icon: "fa-circle-half-stroke" }],
     pw: { current: "", next: "", confirm: "", saving: false, error: "" },
@@ -18,10 +19,10 @@ document.addEventListener("alpine:init", () => {
     company: { name: "", phone1: "", phone2: "", has_logo: false, logo_version: null, saving: false, error: "", logoBusy: false },
     busy: "", file: null, drag: false, importing: false, result: null,
     exports: [
-      { path: "/api/excel/products/export", name: "products.xlsx", label: "المنتجات", sub: "كل المنتجات وكمياتها", icon: "fa-boxes-stacked" },
-      { path: "/api/excel/products/template", name: "products-template.xlsx", label: "قالب الاستيراد", sub: "ملف فاضي بالأعمدة المطلوبة", icon: "fa-table" },
-      { path: "/api/excel/movements/export", name: "movements.xlsx", label: "حركات المخزون", sub: "الوارد والصادر والنقل", icon: "fa-right-left" },
-      { path: "/api/excel/quantity-adjustments/export", name: "adjustments.xlsx", label: "تعديلات الكميات", sub: "سجل التصحيحات اليدوية", icon: "fa-pen-to-square", admin: true },
+      { path: "/api/excel/products/export", name: "products.xlsx", label: "المنتجات", sub: "كل المنتجات وكمياتها", icon: "fa-boxes-stacked", perm: "products.export" },
+      { path: "/api/excel/products/template", name: "products-template.xlsx", label: "قالب الاستيراد", sub: "ملف فاضي بالأعمدة المطلوبة", icon: "fa-table", perm: "products.import" },
+      { path: "/api/excel/movements/export", name: "movements.xlsx", label: "حركات المخزون", sub: "الوارد والصادر والنقل", icon: "fa-right-left", perm: "invoices.view" },
+      { path: "/api/excel/quantity-adjustments/export", name: "adjustments.xlsx", label: "تعديلات الكميات", sub: "سجل التصحيحات اليدوية", icon: "fa-pen-to-square", perm: "reports.view" },
     ],
 
     get logoSrc() { return `${API_BASE}/api/company/logo?v=${encodeURIComponent(this.company.logo_version || "")}`; },
@@ -78,7 +79,7 @@ document.addEventListener("alpine:init", () => {
     },
 
     init() {
-      if (this.admin) this.loadCompany();
+      if (this.canCompany) this.loadCompany();
       window.addEventListener("app-user", (e) => { this.user = e.detail; });
       window.addEventListener("app-theme", (e) => { if (this.theme !== "auto") this.theme = e.detail.dark ? "dark" : "light"; });
       if (location.hash === "#import") this.$nextTick(() => document.getElementById("import")?.scrollIntoView({ behavior: "smooth" }));
@@ -114,7 +115,7 @@ document.addEventListener("alpine:init", () => {
 
     pick(f) {
       if (!f) return;
-      if (!/\.xlsx?$/i.test(f.name)) { toast("لازم الملف يكون Excel (.xlsx)", "error"); return; }
+      if (!/\.xlsx$/i.test(f.name)) { toast("لازم الملف يكون Excel (.xlsx)", "error"); return; }
       if (f.size > 10 * 1024 * 1024) { toast("الملف أكبر من 10 ميجا", "error"); return; }
       this.file = f; this.result = null;
     },

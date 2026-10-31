@@ -16,7 +16,7 @@
 <body>
 <noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
 
-<div id="shell" data-active="login-logs" data-title="سجل الدخول" data-admin-only>
+<div id="shell" data-perm="logs.view" data-active="login-logs" data-title="سجل الدخول">
   <div x-data="loginLogs" class="space-y-5">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div><h1 class="text-2xl font-bold">سجل الدخول</h1><p class="mt-1 text-sm text-muted">جلسات الدخول للنظام — وتقدر تنهي أي جلسة مفتوحة فورًا</p></div>
@@ -44,7 +44,7 @@
                 <td class="text-muted" x-text="l.logout_time ? fmtDateTime(l.logout_time) : '—'"></td><td class="tabular-nums text-muted" x-text="duration(l)"></td>
                 <td dir="ltr" class="text-end tabular-nums text-muted" x-text="l.ip_address || '—'"></td>
                 <td><span class="badge" :class="l.is_active ? 'badge-ok' : 'badge-mute'" x-text="l.is_active ? 'مفتوحة' : (l.closed_by ? 'أنهاها ' + l.closed_by : 'مقفولة')"></span></td>
-                <td><button type="button" class="btn btn-outline btn-sm text-red-600" x-show="l.is_active" @click="revoke(l)"><i class="fa-solid fa-power-off"></i>إنهاء</button></td>
+                <td><button type="button" class="btn btn-outline btn-sm text-red-600" x-show="l.is_active && canRevoke" @click="revoke(l)"><i class="fa-solid fa-power-off"></i>إنهاء</button></td>
               </tr>
             </template>
           </tbody>

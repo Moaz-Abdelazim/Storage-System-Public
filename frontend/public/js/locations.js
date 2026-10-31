@@ -3,7 +3,7 @@
 //  البحث بيتم على السيرفر (حد أقصى للنتايج)، ومنتجات كل موقع بترقيم من السيرفر.
 // =====================================================================
 import { api, qs } from "./api.js";
-import { isAdmin } from "./auth.js";
+import { can } from "./auth.js";
 import { invalidateData } from "./data.js";
 import { num, toast, errMsg, confirmAction } from "./utils.js";
 
@@ -13,7 +13,7 @@ const decorate = (n) => ({ ...n, _open: false, _kids: [], _page: 0, _total: 0, _
 
 document.addEventListener("alpine:init", () => {
   window.Alpine.data("locations", () => ({
-    admin: isAdmin(), num,
+    canManage: can("locations.manage"), canDelete: can("locations.delete"), num,
     tree: [], summary: null, loading: true, error: "",
     search: "", results: [], resultsTruncated: false, searching: false,
     selected: null,

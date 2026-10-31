@@ -7,12 +7,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
-from .. import models, schemas, auth
+from .. import models, schemas, auth, permissions
 from ..database import get_db
 from ..location_utils import (
     LocationIndex, normalize_code, require_leaf_location, query_transfers, transfer_to_dict, lock_products,
 )
 from ..timezone_utils import now_cairo
+from ..money import q3
+from ..services import inventory
 from ..query_helpers import contains, page_args, paged
 
 router = APIRouter(prefix="/api/locations", tags=["Locations"])
@@ -61,7 +63,7 @@ def _page(rows: list, page: int, page_size: int, default: int = 10, max_size: in
 #  Warehouses
 # =====================================================================
 @router.get("/warehouses")
-def list_warehouses(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def list_warehouses(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_any_permission("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage"))):
     idx = LocationIndex(db)
     return [idx.warehouse_dict(w) for w in idx.warehouses_sorted()]
 
@@ -70,7 +72,7 @@ def list_warehouses(db: Session = Depends(get_db), current_user: models.User = D
 def create_warehouse(
     payload: schemas.WarehouseCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("locations.manage")),
 ):
     name = _clean_name(payload.name, "اسم المخزن")
     code = normalize_code(payload.code, "كود المخزن")
@@ -88,7 +90,7 @@ def set_default_location(
     warehouse_id: int,
     payload: schemas.DefaultLocationSet,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("locations.manage")),
 ):
     """تحديد (أو إلغاء) مكان الاستلام الافتراضي للمخزن. اختياري - مخزن من غير مكان افتراضي بيطلب مكان محدد وقت الاستلام."""
     wh = db.query(models.Warehouse).filter(models.Warehouse.id == warehouse_id).first()
@@ -112,7 +114,7 @@ def update_warehouse(
     warehouse_id: int,
     payload: schemas.WarehouseUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("locations.manage")),
 ):
     wh = db.query(models.Warehouse).filter(models.Warehouse.id == warehouse_id).first()
     if not wh:
@@ -132,7 +134,7 @@ def update_warehouse(
 def delete_warehouse(
     warehouse_id: int,
     db: Session = Depends(get_db),
-    admin: models.User = Depends(auth.require_admin),
+    admin: models.User = Depends(auth.require_permission("locations.delete")),
 ):
     wh = db.query(models.Warehouse).filter(models.Warehouse.id == warehouse_id).first()
     if not wh:
@@ -148,7 +150,7 @@ def delete_warehouse(
 #  Tree + children (للـ Tree View وللقوائم المتدرجة)
 # =====================================================================
 @router.get("/tree")
-def tree(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def tree(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_any_permission("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage"))):
     idx = LocationIndex(db)
     default_ids = idx.default_location_ids()
     qty_by_loc = defaultdict(float)
@@ -203,7 +205,7 @@ def children(
     warehouse_id: Optional[int] = None,
     parent_id: Optional[int] = None,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_any_permission("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage")),
 ):
     idx = LocationIndex(db)
     if parent_id:
@@ -226,7 +228,7 @@ def children(
 
 
 @router.get("/index")
-def location_index(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def location_index(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_any_permission("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage"))):
     """
     خريطة مسطّحة {الكود الكامل: [المستويات بأسمائها]} - الواجهة بتستخدمها للـ pop-up اللي بيظهر
     لما الماوس يقف على أي كود مكان (من غير طلب لكل كود).
@@ -258,7 +260,7 @@ def _sibling_exists(db: Session, warehouse_id: int, parent_id: Optional[int], co
 def create_location(
     payload: schemas.LocationCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("locations.manage")),
 ):
     name = _clean_name(payload.name, "اسم الموقع")
     code = normalize_code(payload.code, "كود الموقع")
@@ -305,7 +307,7 @@ def update_location(
     location_id: int,
     payload: schemas.LocationUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("locations.manage")),
 ):
     loc = db.query(models.Location).filter(models.Location.id == location_id).first()
     if not loc:
@@ -328,7 +330,7 @@ def update_location(
 def delete_location(
     location_id: int,
     db: Session = Depends(get_db),
-    admin: models.User = Depends(auth.require_admin),
+    admin: models.User = Depends(auth.require_permission("locations.delete")),
 ):
     idx = LocationIndex(db)
     loc = idx.locations.get(location_id)
@@ -359,7 +361,7 @@ def delete_location(
 def resolve_location(
     code: str,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_any_permission("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage")),
 ):
     """
     البحث عن مخزن/موقع بالكود الكامل وعرض البضاعة اللي فيه (وفي كل اللي تحته).
@@ -405,9 +407,9 @@ def resolve_location(
 def transfer_product(
     payload: schemas.TransferCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("transfers.create")),
 ):
-    qty = _round_qty(payload.quantity)
+    qty = q3(payload.quantity)
     if qty <= 0:
         raise HTTPException(status_code=400, detail="الكمية لازم تكون أكبر من صفر")
     if payload.from_location_id == payload.to_location_id:
@@ -424,38 +426,26 @@ def transfer_product(
         raise HTTPException(status_code=404, detail="الموقع المنقول منه مش موجود")
     require_leaf_location(idx, payload.to_location_id)
 
-    PL = models.ProductLocation
-    src = db.query(PL).filter(PL.product_id == product.id, PL.location_id == from_loc.id).with_for_update().first()
-    available = src.quantity if src else 0.0
-    if _round_qty(available - qty) < 0:
-        raise HTTPException(
-            status_code=400,
-            detail=f"الكمية المتاحة من ({product.name}) في {idx.full_code(from_loc.id)} هي {_round_qty(available)} وده أقل من الكمية المطلوبة",
+    # الخصم من المصدر بشرط الكفاية (UPDATE ذرّي) والإضافة للوجهة (upsert ذرّي). الإجمالي ما بيتغيرش.
+    # لو الرصيد مش كفاية services.inventory بيرمي InsufficientStock (400 برسالة عربي من main.py).
+    def _tx():
+        inventory.transfer_stock(db, product.id, from_loc.id, payload.to_location_id, qty)
+        t = models.LocationTransfer(
+            product_id=product.id,
+            from_location_id=from_loc.id,
+            to_location_id=payload.to_location_id,
+            quantity=float(qty),
+            moved_by_id=current_user.id,
+            moved_by_username=current_user.username,
+            notes=(payload.notes or "").strip() or None,
+            date=now_cairo(),
         )
-    dst = db.query(PL).filter(PL.product_id == product.id, PL.location_id == payload.to_location_id).with_for_update().first()
+        db.add(t)
+        db.commit()
+        db.refresh(t)
+        return t
 
-    # إجمالي كمية المنتج (Product.quantity) ما بيتغيرش - بس بتتحرك بين المكانين
-    src.quantity = _round_qty(src.quantity - qty)
-    if dst:
-        dst.quantity = _round_qty(dst.quantity + qty)
-    else:
-        db.add(PL(product_id=product.id, location_id=payload.to_location_id, quantity=qty))
-    if src.quantity <= 0:
-        db.delete(src)
-
-    t = models.LocationTransfer(
-        product_id=product.id,
-        from_location_id=from_loc.id,
-        to_location_id=payload.to_location_id,
-        quantity=qty,
-        moved_by_id=current_user.id,
-        moved_by_username=current_user.username,
-        notes=(payload.notes or "").strip() or None,
-        date=now_cairo(),
-    )
-    db.add(t)
-    db.commit()
-    db.refresh(t)
+    t = inventory.with_retry(db, _tx)
     return transfer_to_dict(t, idx)
 
 
@@ -465,7 +455,7 @@ def putaway_list(
     page_size: int = 10,
     search: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_any_permission("transfers.create", "transfers.view", "locations.view")),
 ):
     """
     الأصناف اللي لسه في أماكن الاستلام الافتراضية (مستنية الرص) - بترقيم من قاعدة البيانات.
@@ -524,7 +514,7 @@ def list_transfers(
     page: int = 1,
     page_size: int = 10,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("transfers.view")),
 ):
     """تقرير حركات النقل (من أو إلى أي مكان جوه الموقع/المخزن المختار، وبالترتيب الأحدث أولاً)."""
     idx = LocationIndex(db)
@@ -551,7 +541,7 @@ def stock_by_location(
     breakdown_page: int = 1,
     breakdown_page_size: int = 8,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_any_permission("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage")),
 ):
     """
     إجمالي الكمية (والقيمة لو أدمن) جوه مخزن أو أي موقع (بكل اللي تحته)، مع تفصيل حسب المستوى اللي تحته مباشرة،
@@ -561,7 +551,7 @@ def stock_by_location(
     PL, P = models.ProductLocation, models.Product
     idx = LocationIndex(db)
     scope = idx.scope_ids(warehouse_id, location_id)
-    show_value = current_user.role == "admin"  # قيمة المخزون للأدمن بس (زي باقي النظام)
+    show_value = permissions.has_permission(current_user, "finance.view")  # قيمة المخزون للأدمن بس (زي باقي النظام)
     pg, size = page_args(page, page_size, default=10, max_value=100)
     bpg, bsize = page_args(breakdown_page, breakdown_page_size, default=8, max_value=50)
 

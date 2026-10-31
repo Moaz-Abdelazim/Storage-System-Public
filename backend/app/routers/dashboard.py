@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
-from .. import models, auth
+from .. import models, auth, permissions
 from ..database import get_db
 from ..display_utils import format_user_display
 from ..location_utils import LocationIndex
@@ -73,7 +73,7 @@ def flow(
     current_user: models.User = Depends(auth.get_current_user),
 ):
     days = max(1, min(days, 90))
-    return {"days": _flow(db, days, with_values=current_user.role == "admin")}
+    return {"days": _flow(db, days, with_values=permissions.has_permission(current_user, "finance.view"))}
 
 
 def _distribution(db: Session) -> List[dict]:
@@ -97,11 +97,12 @@ def _distribution(db: Session) -> List[dict]:
     return items
 
 
-def _recent_movements(db: Session, is_admin: bool, limit: int = 6) -> List[dict]:
+def _recent_movements(db: Session, is_admin: bool, limit: int = 6, can_invoices: bool = True, can_transfers: bool = True) -> List[dict]:
     I, O, T = models.StockInInvoice, models.StockOutInvoice, models.LocationTransfer
-    ins = db.query(I).options(joinedload(I.supplier), joinedload(I.received_by)).order_by(I.date.desc()).limit(limit).all()
-    outs = db.query(O).options(joinedload(O.recipient), joinedload(O.delivered_by)).order_by(O.date.desc()).limit(limit).all()
-    trs = db.query(T).options(joinedload(T.product), joinedload(T.moved_by)).order_by(T.date.desc()).limit(limit).all()
+    # كل نوع بصلاحيته: وارد/صادر ← invoices.view، نقل ← transfers.view
+    ins = db.query(I).options(joinedload(I.supplier), joinedload(I.received_by)).order_by(I.date.desc()).limit(limit).all() if can_invoices else []
+    outs = db.query(O).options(joinedload(O.recipient), joinedload(O.delivered_by)).order_by(O.date.desc()).limit(limit).all() if can_invoices else []
+    trs = db.query(T).options(joinedload(T.product), joinedload(T.moved_by)).order_by(T.date.desc()).limit(limit).all() if can_transfers else []
 
     in_tot = invoice_totals(db, models.StockInItem, [i.id for i in ins])
     out_tot = invoice_totals(db, models.StockOutItem, [o.id for o in outs])
@@ -143,7 +144,7 @@ def overview(
     current_user: models.User = Depends(auth.get_current_user),
 ):
     days = max(1, min(days, 30))
-    is_admin = current_user.role == "admin"
+    is_admin = permissions.has_permission(current_user, "finance.view")
     P = models.Product
 
     total_products = db.query(func.count(P.id)).filter(P.is_active.is_(True)).scalar() or 0
@@ -177,7 +178,11 @@ def overview(
                 for p in low_items
             ],
         },
-        "recent": _recent_movements(db, is_admin),
+        "recent": _recent_movements(
+            db, is_admin,
+            can_invoices=permissions.has_permission(current_user, "invoices.view"),
+            can_transfers=permissions.has_permission(current_user, "transfers.view"),
+        ),
         "admin": None,
     }
 

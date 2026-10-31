@@ -1,10 +1,13 @@
 from pydantic import BaseModel, Field, field_validator
+
+from .barcode import normalize_barcode
 from datetime import datetime
 from typing import Annotated, Literal, Optional, List
 
 # أرقام محدودة ومنتهية: بتمنع NaN / Infinity (كانت بتعدّي فحص "الكمية أكبر من صفر" وتبوّظ المخزون)
-Num = Annotated[float, Field(allow_inf_nan=False, ge=-1e12, le=1e12)]
-NonNegNum = Annotated[float, Field(allow_inf_nan=False, ge=0, le=1e12)]
+# الحد الأقصى = أكبر قيمة بتتخزن في DECIMAL(14,3) (11 رقم صحيح) - قيمة أكبر كانت هتفشل في الـ DB
+Num = Annotated[float, Field(allow_inf_nan=False, ge=-99_999_999_999, le=99_999_999_999)]
+NonNegNum = Annotated[float, Field(allow_inf_nan=False, ge=0, le=99_999_999_999)]
 
 
 # ---------- Auth ----------
@@ -26,18 +29,60 @@ class Token(BaseModel):
     access_token: str = ""  # فاضي: التوكن في HttpOnly cookie ومش بيتبعت في الـ body
     token_type: str = "cookie"
     username: str
-    role: str
+    role: str  # اسم الدور (للتوافق مع الواجهة القديمة)
+    role_id: int
+    is_admin: bool = False
+    permissions: List[str] = []
 
 
 class UserOut(BaseModel):
     id: int
     username: str
     full_name: Optional[str] = None
-    role: str
+    role_id: int
+    role_name: str
+    is_admin: bool
     is_active: bool
+    created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+class MeOut(BaseModel):
+    id: int
+    username: str
+    full_name: Optional[str] = None
+    role: str
+    role_id: int
+    is_admin: bool
+    is_active: bool = True
+    role_active: bool = True  # false = دور المستخدم موقوف (الواجهة بتعرض رسالة وتخرّجه)
+    permissions: List[str]
+
+
+class RoleIn(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+    description: Optional[str] = Field(default=None, max_length=255)
+    permissions: List[str] = []
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v):
+        v = " ".join((v or "").split())
+        if len(v) < 2:
+            raise ValueError("اسم الدور لازم يكون حرفين على الأقل")
+        return v
+
+    @field_validator("description")
+    @classmethod
+    def _desc(cls, v):
+        v = (v or "").strip()
+        return v or None
+
+
+class RoleActiveSet(BaseModel):
+    is_active: bool
 
 
 def _check_password_strength(value: str) -> str:
@@ -54,7 +99,7 @@ class UserCreate(BaseModel):
     username: str
     password: str
     full_name: Optional[str] = Field(default=None, max_length=100)
-    role: str = "staff"
+    role_id: int
 
     @field_validator("username")
     @classmethod
@@ -66,19 +111,12 @@ class UserCreate(BaseModel):
     def _pw(cls, v):
         return _check_password_strength(v)
 
-    @field_validator("role")
-    @classmethod
-    def _role(cls, v):
-        if v not in ("admin", "staff"):
-            raise ValueError("الصلاحية لازم تكون admin أو staff")
-        return v
-
 
 class UserUpdate(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
     full_name: Optional[str] = Field(default=None, max_length=100)
-    role: Optional[str] = None
+    role_id: Optional[int] = None
     is_active: Optional[bool] = None
 
     @field_validator("username")
@@ -90,13 +128,6 @@ class UserUpdate(BaseModel):
     @classmethod
     def _pw(cls, v):
         return None if v in (None, "") else _check_password_strength(v)
-
-    @field_validator("role")
-    @classmethod
-    def _role(cls, v):
-        if v is not None and v not in ("admin", "staff"):
-            raise ValueError("الصلاحية لازم تكون admin أو staff")
-        return v
 
 
 # ---------- Category ----------
@@ -235,12 +266,18 @@ class TransferCreate(BaseModel):
 # ---------- Product ----------
 class ProductBase(BaseModel):
     sku: Optional[str] = Field(default=None, max_length=50)
+    barcode: Optional[str] = None
     name: str = Field(min_length=1, max_length=150)
     category_id: Optional[int] = None
     brand_id: Optional[int] = None
     unit: Optional[str] = Field(default="قطعة", max_length=30)
     price: NonNegNum = 0.0
     min_quantity: NonNegNum = 0.0
+
+    @field_validator("barcode", mode="before")
+    @classmethod
+    def _barcode(cls, v):
+        return normalize_barcode(v)
 
 
 class ProductCreate(ProductBase):
@@ -249,6 +286,8 @@ class ProductCreate(ProductBase):
 
 
 class ProductUpdate(BaseModel):
+    # barcode: غير مرسل = من غير تغيير، null أو "" = مسح الباركود
+    barcode: Optional[str] = None
     name: Optional[str] = Field(default=None, min_length=1, max_length=150)
     category_id: Optional[int] = None
     brand_id: Optional[int] = None
@@ -256,10 +295,16 @@ class ProductUpdate(BaseModel):
     price: Optional[NonNegNum] = None
     min_quantity: Optional[NonNegNum] = None
 
+    @field_validator("barcode", mode="before")
+    @classmethod
+    def _barcode(cls, v):
+        return normalize_barcode(v)
+
 
 class ProductOut(BaseModel):
     id: int
     sku: Optional[str] = None
+    barcode: Optional[str] = None
     name: str
     category_id: Optional[int] = None
     category_name: Optional[str] = None
@@ -325,7 +370,7 @@ class StockInInvoiceOut(BaseModel):
     notes: Optional[str] = None
     items: List[StockInItemOut] = []
     items_total: int = 0  # إجمالي عدد الأصناف في الفاتورة (ممكن يكون أكبر من طول items لو معروضة مختصرة)
-    total_value: float = 0.0  # إجمالي قيمة الفاتورة كاملة (محسوب من كل الأصناف مش بس المعروض منها)
+    total_value: Optional[float] = 0.0  # إجمالي قيمة الفاتورة كاملة. null لو المستخدم ملوش finance.view (فاتورة وارد)
 
 
 # ---------- Stock Out (invoice style) ----------
@@ -380,7 +425,7 @@ class StockOutInvoiceOut(BaseModel):
     notes: Optional[str] = None
     items: List[StockOutItemOut] = []
     items_total: int = 0  # إجمالي عدد الأصناف في الفاتورة (ممكن يكون أكبر من طول items لو معروضة مختصرة)
-    total_value: float = 0.0  # إجمالي قيمة الفاتورة كاملة (محسوب من كل الأصناف مش بس المعروض منها)
+    total_value: Optional[float] = 0.0  # إجمالي قيمة الفاتورة كاملة. null لو المستخدم ملوش finance.view (فاتورة وارد)
     # ---- إضافات (اختيارية بقيم افتراضية - الفرونت القديم بيتجاهلها) ----
     status: str = "completed"
     discount_type: Optional[str] = None

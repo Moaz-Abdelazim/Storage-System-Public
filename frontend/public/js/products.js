@@ -2,7 +2,7 @@
 //  products.js — صفحة المنتجات (ترقيم وفلترة وترتيب من السيرفر).
 // =====================================================================
 import { api, qs, download } from "./api.js";
-import { isAdmin } from "./auth.js";
+import { can } from "./auth.js";
 import { invalidateData } from "./data.js";
 import { num, money, fmtDateTime, toast, errMsg, productStatus, confirmAction, getQuery, setQuery } from "./utils.js";
 
@@ -10,12 +10,13 @@ let rowKey = 0;
 const newRow = () => ({ key: ++rowKey, location_id: null, quantity: null });
 const blankForm = () => ({
   open: false, saving: false, errors: {}, id: null,
-  sku: "", name: "", category_id: null, brand_id: null, unit: "قطعة", price: 0, min_quantity: 0, rows: [],
+  sku: "", barcode: "", name: "", category_id: null, brand_id: null, unit: "قطعة", price: 0, min_quantity: 0, rows: [],
 });
 
 document.addEventListener("alpine:init", () => {
   window.Alpine.data("products", () => ({
-    admin: isAdmin(),
+    canCreate: can("products.create"), canEdit: can("products.edit"), canPrice: can("products.price"), canAdjust: can("products.adjust"),
+    canToggle: can("products.toggle"), canMovements: can("invoices.view"), canFinance: can("finance.view"),
     rows: [], total: 0, page: 1, pages: 1, size: 25,
     loading: true, error: "", exporting: false,
     filters: { search: getQuery("search"), category_id: Number(getQuery("category_id")) || null, brand_id: Number(getQuery("brand_id")) || null, stock: getQuery("stock") || "", status: "active", sort: "name", order: "asc" },
@@ -63,7 +64,7 @@ document.addEventListener("alpine:init", () => {
 
     openForm(p) {
       this.form = blankForm();
-      if (p) Object.assign(this.form, { id: p.id, sku: p.sku || "", name: p.name, category_id: p.category_id, brand_id: p.brand_id, unit: p.unit || "قطعة", price: p.price, min_quantity: p.min_quantity });
+      if (p) Object.assign(this.form, { id: p.id, sku: p.sku || "", barcode: p.barcode || "", name: p.name, category_id: p.category_id, brand_id: p.brand_id, unit: p.unit || "قطعة", price: p.price, min_quantity: p.min_quantity });
       else this.form.rows = [newRow()];
       this.form.open = true;
     },
@@ -73,7 +74,7 @@ document.addEventListener("alpine:init", () => {
       f.errors = {};
       if (!f.name) { f.errors.name = "اكتب اسم المنتج"; return; }
       const body = {
-        sku: f.sku || null, name: f.name, category_id: f.category_id || null, brand_id: f.brand_id || null,
+        sku: f.sku || null, barcode: (f.barcode || "").trim() || null, name: f.name, category_id: f.category_id || null, brand_id: f.brand_id || null,
         unit: f.unit || "قطعة", price: Number(f.price) || 0, min_quantity: Number(f.min_quantity) || 0,
       };
       if (!f.id) {

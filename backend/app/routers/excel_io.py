@@ -1,22 +1,52 @@
 import io
+import logging
 import re
 from datetime import datetime
+from typing import Optional
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.orm import Session, joinedload
 
-from .. import models, auth
+from .. import models, auth, permissions
+from ..query_helpers import end_exclusive, parse_dt
 from ..display_utils import format_user_display
 from ..database import get_db
 from ..location_utils import LocationIndex, lock_products
 from ..timezone_utils import now_cairo
+from ..barcode import barcode_conflict, normalize_excel_barcode, sku_conflicts_with_barcode
+from ..money import q3
+from ..rate_limit import limit_per_user
+from ..services import inventory
+
+_log = logging.getLogger("app.excel")
+MAX_EXPORT_ROWS = 100_000  # حد أقصى لعدد صفوف كل شيت في تصدير الحركات (حماية الذاكرة)
 
 router = APIRouter(prefix="/api/excel", tags=["Excel Import/Export"])
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB
 MAX_IMPORT_ROWS = 20000
+MAX_UNCOMPRESSED_BYTES = 80 * 1024 * 1024  # حماية من zip bomb: xlsx ملف zip، حجمه بعد الفك لازم يفضل معقول
+MAX_ZIP_ENTRIES = 200
+
+
+def _validate_xlsx_container(content: bytes) -> None:
+    """فحص بنية الـ zip قبل ما pandas/openpyxl يفكّوه: تضخّم الحجم، عدد الملفات، ومسارات خطرة."""
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as z:
+            infos = z.infolist()
+            if len(infos) > MAX_ZIP_ENTRIES or sum(i.file_size for i in infos) > MAX_UNCOMPRESSED_BYTES:
+                raise HTTPException(status_code=400, detail="الملف كبير أو غير طبيعي - اتأكد إنه ملف Excel سليم")
+            if any(i.filename.startswith(("/", "..")) or ".." in i.filename.split("/") for i in infos):
+                raise HTTPException(status_code=400, detail="الملف غير صالح")
+            if "[Content_Types].xml" not in {i.filename for i in infos}:
+                raise HTTPException(status_code=400, detail="الملف مش Excel (.xlsx) سليم")
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="الملف مش Excel (.xlsx) سليم")
 
 
 def _safe_cell(value):
@@ -50,11 +80,12 @@ def _safe_df(df):
 #
 # عمود "الحالة" = مفعّل / غير مفعّل. لو العمود مش موجود في الملف أو الخلية فاضية: المنتج الجديد بيتعمل
 # مفعّل، والمنتج الموجود حالته ما بتتغيّرش.
-PRODUCT_COLUMNS = ["ID", "SKU", "الاسم", "التصنيف", "الماركة", "الوحدة", "السعر", "الموقع", "الكمية", "حد الطلب الأدنى", "الحالة"]
+PRODUCT_COLUMNS = ["ID", "SKU", "الباركود", "الاسم", "التصنيف", "الماركة", "الوحدة", "السعر", "الموقع", "الكمية", "حد الطلب الأدنى", "الحالة"]
 
 # أسماء بديلة مقبولة للأعمدة (إنجليزي/عربي) - بتتحوّل للأسماء الأساسية قبل القراءة
 _COLUMN_ALIASES = {
     "id": "ID", "sku": "SKU", "product code": "SKU", "كود المنتج": "SKU",
+    "barcode": "الباركود", "bar code": "الباركود", "الباركود": "الباركود", "باركود": "الباركود", "كود الباركود": "الباركود",
     "product name": "الاسم", "name": "الاسم", "اسم المنتج": "الاسم", "الاسم": "الاسم",
     "category": "التصنيف", "التصنيف": "التصنيف", "brand": "الماركة", "الماركة": "الماركة",
     "unit": "الوحدة", "الوحدة": "الوحدة", "price": "السعر", "السعر": "السعر",
@@ -87,6 +118,12 @@ def _sheet_bytes(df, instructions=None):
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         df.pipe(_safe_df).to_excel(writer, index=False, sheet_name="المنتجات")
+        if "الباركود" in df.columns:
+            # عمود الباركود نص: Excel مايشيلش الأصفار من الأول ومايحوّلهوش لصيغة علمية لما المستخدم يكتب/يعدّل
+            ws = writer.sheets["المنتجات"]
+            col = list(df.columns).index("الباركود") + 1
+            for (cell,) in ws.iter_rows(min_row=2, max_row=max(ws.max_row, 1000), min_col=col, max_col=col):
+                cell.number_format = "@"  # شامل الصفوف الفاضية عشان الصفوف اللي هيضيفها المستخدم تبقى نص برضه
         if instructions:
             pd.DataFrame({"تعليمات": instructions}).pipe(_safe_df).to_excel(writer, index=False, sheet_name="تعليمات")
     buffer.seek(0)
@@ -94,13 +131,13 @@ def _sheet_bytes(df, instructions=None):
 
 
 @router.get("/products/export")
-def export_products(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def export_products(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_permission("products.export"))):
     idx = LocationIndex(db)
     products = db.query(models.Product).order_by(models.Product.name).all()
     data = []
     for p in products:
         base = {
-            "ID": p.id, "SKU": p.sku, "الاسم": p.name,
+            "ID": p.id, "SKU": p.sku, "الباركود": p.barcode, "الاسم": p.name,
             "التصنيف": p.category.name if p.category else None,
             "الماركة": p.brand.name if p.brand else None,
             "الوحدة": p.unit, "السعر": p.price, "حد الطلب الأدنى": p.min_quantity,
@@ -124,7 +161,7 @@ def export_products(db: Session = Depends(get_db), current_user: models.User = D
 
 
 @router.get("/products/template")
-def download_template():
+def download_template(_user: models.User = Depends(auth.require_permission("products.import"))):
     """شيت فاضي بنفس الأعمدة عشان تعرف تملأه صح (+ شيت تعليمات للمواقع)."""
     df = pd.DataFrame(columns=PRODUCT_COLUMNS)
     buffer = _sheet_bytes(df, instructions=[
@@ -134,6 +171,8 @@ def download_template():
         "الموقع لازم يكون مكان نهائي (مالوش مواقع تحته).",
         "لو كتبت كود مخزن بس (مثال: W1) الكمية بتدخل مكان الاستلام الافتراضي للمخزن ده (لو متحدد)، وبعدين تتنقل لمكانها النهائي.",
         "أي كمية أكبر من صفر لازم يكون ليها موقع. صف من غير موقع وكميته صفر/فاضية = تحديث بيانات المنتج بس.",
+        "عمود الباركود اختياري. اكتبه كنص (العمود متنسّق كنص) عشان الأصفار في الأول ماتتشالش، وأي باركود بصيغة علمية (1.23E+12) بيترفض. خلية الباركود الفاضية ما بتمسحش باركود موجود.",
+        "الباركود لازم يكون مميز لكل منتج ومينفعش يساوي SKU منتج تاني. المطابقة بالترتيب: ID ثم SKU ثم الباركود ثم الاسم.",
         "عمود الحالة: اكتب مفعّل أو غير مفعّل. لو سبته فاضي: المنتج الجديد بيتعمل مفعّل، والمنتج الموجود حالته ما بتتغيّرش.",
     ])
     return StreamingResponse(
@@ -144,19 +183,22 @@ def download_template():
 
 
 @router.post("/products/import")
-async def import_products(
+def import_products(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("products.import")),
+    _limit: None = Depends(limit_per_user("excel_import", 20, 60 * 60)),
 ):
-    if not file.filename.endswith((".xlsx", ".xls")):
-        raise HTTPException(status_code=400, detail="لازم الملف يكون Excel (.xlsx)")
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="لازم الملف يكون Excel بصيغة .xlsx")
 
     if file.size is not None and file.size > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="الملف كبير جدًا (الحد الأقصى 10 ميجا)")
-    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    content = file.file.read(MAX_UPLOAD_BYTES + 1)  # def عادي (مش async): الشغل كله blocking (pandas + DB) فمينفعش يقفل الـ event loop
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="الملف كبير جدًا (الحد الأقصى 10 ميجا)")
+    _validate_xlsx_container(content)
+    _validate_xlsx_container(content)
     try:
         df = pd.read_excel(io.BytesIO(content), dtype=str)
     except Exception:
@@ -208,12 +250,20 @@ async def import_products(
         return brand.id
 
     # ---- المرحلة 1: قراءة الصفوف وتجميعها حسب المنتج (صف لكل مكان تخزين) ----
+    can_adjust = permissions.has_permission(current_user, "products.adjust")
+    can_price = permissions.has_permission(current_user, "products.price")
+    seen_barcodes = {}  # الباركود (lower) -> مفتاح المنتج اللي استخدمه في الملف (لمنع تكراره لمنتجين مختلفين)
     entries = {}  # key -> {"product", "name", "sku", "row", "unassigned", "loc_rows": {location_id: qty}}
     for i, row in df.iterrows():
         rn = i + 2
         try:
             product_id = _clean(row.get("ID"))  # اختياري - لو موجود بيبقى هو المرجع الأساسي للمطابقة
             sku = _clean(row.get("SKU"))  # اختياري
+            try:
+                barcode = normalize_excel_barcode(row.get("الباركود"))  # اختياري
+            except ValueError as exc:
+                errors.append(f"صف {rn}: {exc}")
+                continue
             name = _clean(row.get("الاسم"))
             if not name:
                 errors.append(f"صف {rn}: اسم المنتج فاضي")
@@ -251,6 +301,10 @@ async def import_products(
                     errors.append(f"صف {rn}: الكمية ({qty:g}) لازم يتحدد لها موقع - اكتب كود المكان في عمود الموقع (مفيش بضاعة من غير مكان)")
                     continue
 
+            if not can_adjust and (loc_raw or (qty or 0) > 0):
+                errors.append(f"صف {rn}: ملكش صلاحية تعديل الكميات والمواقع - سيب عمودي الكمية والموقع فاضيين")
+                continue
+
             # --- حالة المنتج (مفعّل / غير مفعّل) ---
             is_active = None
             if has_status_col:
@@ -269,12 +323,32 @@ async def import_products(
                     product = None
             if not product and sku:
                 product = db.query(models.Product).filter(models.Product.sku == sku).first()
-            key = ("pid", product.id) if product else (("sku", sku) if sku else ("name", name.lower()))
+            if barcode:
+                by_barcode = db.query(models.Product).filter(func.lower(models.Product.barcode) == barcode.lower()).first()
+                if product is None and by_barcode is not None:
+                    product = by_barcode
+                elif product is not None and by_barcode is not None and by_barcode.id != product.id:
+                    errors.append(f"صف {rn}: الباركود ({barcode}) تابع لمنتج تاني غير المنتج المطابق")
+                    continue
+                conflict = barcode_conflict(db, barcode, exclude_product_id=product.id if product else None)
+                if conflict:
+                    errors.append(f"صف {rn}: {conflict}")
+                    continue
+            if sku and sku_conflicts_with_barcode(db, sku, exclude_product_id=product.id if product else None):
+                errors.append(f"صف {rn}: الـ SKU ({sku}) مستخدم كباركود لمنتج تاني")
+                continue
+            key = ("pid", product.id) if product else (("sku", sku) if sku else (("barcode", barcode.lower()) if barcode else ("name", name.lower())))
+            if barcode:
+                owner_key, owner_name = seen_barcodes.setdefault(barcode.lower(), (key, name.lower()))
+                # نفس الباركود لمنتجين مختلفين: مفتاحين مختلفين، أو منتج جديد بنفس الباركود لكن باسم مختلف
+                if owner_key != key or (product is None and owner_name != name.lower()):
+                    errors.append(f"صف {rn}: نفس الباركود ({barcode}) مستخدم لمنتجين مختلفين في الملف")
+                    continue
 
             entry = entries.get(key)
             if entry is None:
                 entry = entries[key] = {
-                    "product": product, "name": name, "sku": sku, "row": rn, "loc_rows": {},
+                    "product": product, "name": name, "sku": sku, "barcode": barcode, "row": rn, "loc_rows": {},
                     "values": dict(
                         category=_clean(row.get("التصنيف")), brand=_clean(row.get("الماركة")),
                         unit=_clean(row.get("الوحدة")) or "قطعة", price=_num(row.get("السعر")),
@@ -286,8 +360,9 @@ async def import_products(
                     errors.append(f"صف {rn}: نفس المنتج ونفس الموقع ({idx.full_code(location_id)}) مكرر في الملف - اجمع الكميات في صف واحد")
                     continue
                 entry["loc_rows"][location_id] = round(qty, 3)
-        except Exception as e:
-            errors.append(f"صف {rn}: خطأ - {str(e)}")
+        except Exception:
+            _log.exception("excel import: row %s failed", rn)
+            errors.append(f"صف {rn}: خطأ غير متوقع في قراءة الصف - راجع بيانات الصف")
 
     # ---- المرحلة 2: الكتابة في الداتا بيز (كل منتج في commit مستقل) ----
     created, updated = 0, 0
@@ -295,20 +370,25 @@ async def import_products(
         try:
             v = entry["values"]
             values = dict(
-                sku=entry["sku"], name=entry["name"],
+                sku=entry["sku"], barcode=entry["barcode"], name=entry["name"],
                 category_id=get_or_create_category(v["category"]), brand_id=get_or_create_brand(v["brand"]),
                 unit=v["unit"], price=v["price"], min_quantity=v["min_quantity"],
                 is_active=v["is_active"],
             )
             product = entry["product"]
             old_total = None
+            if product and not can_price and values["price"] is not None and round(float(product.price or 0), 2) != round(float(values["price"]), 2):
+                errors.append(f"صف {entry['row']} ({entry['name']}): ملكش صلاحية تغيير سعر منتج موجود")
+                continue
             if product:
-                old_total = round(product.quantity or 0, 3)
+                lock_products(db, [product.id])
+                old_total = float(inventory.product_total(db, product.id))
                 for k, val in values.items():
                     if k == "is_active" and val is None:  # الحالة فاضية = ما نغيّرش حالة المنتج الموجود
                         continue
-                    if k != "sku" or entry["sku"]:  # ما نمسحش SKU موجود لو الخلية سايبينها فاضية بالغلط
-                        setattr(product, k, val)
+                    if k in ("sku", "barcode") and not values[k]:
+                        continue  # ما نمسحش SKU/باركود موجود لو الخلية سايبينها فاضية
+                    setattr(product, k, val)
             else:
                 if values["is_active"] is None:
                     values["is_active"] = True  # منتج جديد من غير حالة = مفعّل
@@ -316,21 +396,12 @@ async def import_products(
                 db.add(product)
                 db.flush()
 
-            lock_products(db, [product.id])  # قفل صف المنتج (FOR UPDATE) قبل تعديل كمياته
-            by_loc = {pl.location_id: pl for pl in product.locations}
-            # الإجمالي = القديم - (القديم في الأماكن اللي في الملف) + (الجديد فيها). الأماكن اللي مش في الملف ما بتتلمسش.
-            new_total = round(product.quantity or 0, 3)
-            for loc_id, qty in entry["loc_rows"].items():
-                pl = by_loc.get(loc_id)
-                new_total = round(new_total - (pl.quantity if pl else 0) + qty, 3)
-                if qty <= 0:
-                    if pl:
-                        db.delete(pl)
-                elif pl:
-                    pl.quantity = qty
-                else:
-                    db.add(models.ProductLocation(product_id=product.id, location_id=loc_id, quantity=qty))
-            product.quantity = new_total
+            if old_total is None:  # منتج جديد لسه ما اتقفلش (الموجود اتقفل فوق قبل تعديل بياناته)
+                lock_products(db, [product.id])
+            # الأماكن اللي في الملف بس بتتغير (الباقي ما بيتلمسش)، والإجمالي بيتحدّث بالفرق جوه الـ service
+            for loc_id, qty in sorted(entry["loc_rows"].items()):
+                inventory.set_location_quantity(db, product.id, loc_id, qty)
+            new_total = float(inventory.product_total(db, product.id))
 
             if old_total is None:
                 created += 1
@@ -344,9 +415,10 @@ async def import_products(
                         reason="استيراد Excel", date=now_cairo(),
                     ))
             db.commit()
-        except Exception as e:
+        except Exception:
             db.rollback()
-            errors.append(f"صف {entry['row']} ({entry['name']}): خطأ - {str(e)}")
+            _log.exception("excel import: product %s failed", entry.get("name"))
+            errors.append(f"صف {entry['row']} ({entry['name']}): تعذّر حفظ المنتج")
 
     message = f"تم إضافة {created} منتج وتحديث {updated} منتج"
     if errors:
@@ -382,65 +454,84 @@ def _num(value):
 
 # ---------- تصدير حركات الوارد/الصادر لعمل analysis عليها ----------
 @router.get("/movements/export")
-def export_movements(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def export_movements(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("invoices.view")),
+):
+    """
+    تصدير الوارد والصادر والنقل (بيحترم date_from/date_to). الاستعلامات بـ JOIN واحد لكل شيت (مش lazy-load لكل صف).
+    من غير finance.view أعمدة الأسعار بتتشال، والنقل بيطلع بس لو عنده transfers.view. حد أقصى MAX_EXPORT_ROWS صف لكل شيت.
+    """
+    start, end_excl = parse_dt(date_from, "تاريخ البداية"), end_exclusive(date_to)
+    show_prices = permissions.has_permission(current_user, "finance.view")
+    can_transfers = permissions.has_permission(current_user, "transfers.view")
     idx = LocationIndex(db)
-    in_invoices = db.query(models.StockInInvoice).order_by(models.StockInInvoice.date.desc()).all()
-    out_invoices = db.query(models.StockOutInvoice).order_by(models.StockOutInvoice.date.desc()).all()
+    P, U = models.Product, models.User
 
-    in_data = [
-        {
-            "رقم الفاتورة": inv.id,
-            "التاريخ": inv.date,
-            "المنتج": it.product.name if it.product else None,
-            "SKU": it.product.sku if it.product else None,
-            "الموقع": idx.full_code(it.location_id) if it.location_id else None,
-            "الكمية": it.quantity,
-            "سعر الوحدة": it.unit_price,
-            "المورد": inv.supplier.name if inv.supplier else None,
-            "استلمها": format_user_display(inv.received_by, inv.received_by_username),
-            "ملاحظات": inv.notes,
-        }
-        for inv in in_invoices
-        for it in inv.items
-    ]
-    out_data = [
-        {
-            "رقم الفاتورة": inv.id,
-            "التاريخ": inv.date,
-            "المنتج": it.product.name if it.product else None,
-            "SKU": it.product.sku if it.product else None,
-            "الموقع": idx.full_code(it.location_id) if it.location_id else None,
-            "الكمية": it.quantity,
-            "سعر الوحدة": it.unit_price,
-            "استلمها (الجهة)": inv.recipient.name if inv.recipient else None,
-            "سلمها": format_user_display(inv.delivered_by, inv.delivered_by_username),
-            "ملاحظات": inv.notes,
-        }
-        for inv in out_invoices
-        for it in inv.items
-    ]
+    def _invoice_rows(Inv, Item, Party, party_fk, user_fk, user_snap, party_col, user_col):
+        q = (
+            db.query(Inv.id, Inv.date, P.name, P.sku, Item.location_id, Item.quantity, Item.unit_price, Party.name,
+                     U.username, U.is_active, getattr(Inv, user_snap), Inv.notes)
+            .join(Item, Item.invoice_id == Inv.id)
+            .join(P, P.id == Item.product_id)
+            .outerjoin(Party, Party.id == getattr(Inv, party_fk))
+            .outerjoin(U, U.id == getattr(Inv, user_fk))
+        )
+        if start:
+            q = q.filter(Inv.date >= start)
+        if end_excl:
+            q = q.filter(Inv.date < end_excl)
+        rows = q.order_by(Inv.date.desc(), Inv.id.desc(), Item.id).limit(MAX_EXPORT_ROWS).all()
+        out = []
+        for inv_id, date, pname, sku, loc_id, qty, price, party, uname, uactive, usnap, notes in rows:
+            row = {
+                "رقم الفاتورة": inv_id, "التاريخ": date, "المنتج": pname, "SKU": sku,
+                "الموقع": idx.full_code(loc_id) if loc_id else None, "الكمية": qty,
+            }
+            if show_prices:
+                row["سعر الوحدة"] = price
+            row[party_col] = party
+            user_obj = None if uname is None else type("U", (), {"username": uname, "is_active": uactive})()
+            row[user_col] = format_user_display(user_obj, usnap)
+            row["ملاحظات"] = notes
+            out.append(row)
+        return out
+
+    in_data = _invoice_rows(models.StockInInvoice, models.StockInItem, models.Supplier, "supplier_id", "received_by_id",
+                            "received_by_username", "المورد", "استلمها")
+    out_data = _invoice_rows(models.StockOutInvoice, models.StockOutItem, models.Recipient, "recipient_id", "delivered_by_id",
+                             "delivered_by_username", "استلمها (الجهة)", "سلمها")
 
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         pd.DataFrame(in_data).pipe(_safe_df).to_excel(writer, index=False, sheet_name="الوارد")
         pd.DataFrame(out_data).pipe(_safe_df).to_excel(writer, index=False, sheet_name="الصادر")
-        transfers = db.query(models.LocationTransfer).order_by(models.LocationTransfer.date.desc()).all()
-        pd.DataFrame(
-            [
-                {
-                    "التاريخ": t.date,
-                    "المنتج": t.product.name if t.product else None,
-                    "SKU": t.product.sku if t.product else None,
-                    "الكمية": t.quantity,
-                    "من موقع": idx.full_code(t.from_location_id),
-                    "إلى موقع": idx.full_code(t.to_location_id),
-                    "اللي نقل": format_user_display(t.moved_by, t.moved_by_username),
-                    "ملاحظات": t.notes,
-                }
-                for t in transfers
-            ],
-            columns=["التاريخ", "المنتج", "SKU", "الكمية", "من موقع", "إلى موقع", "اللي نقل", "ملاحظات"],
-        ).pipe(_safe_df).to_excel(writer, index=False, sheet_name="النقل بين المواقع")
+        if can_transfers:
+            T = models.LocationTransfer
+            tq = db.query(T).options(joinedload(T.product), joinedload(T.moved_by))
+            if start:
+                tq = tq.filter(T.date >= start)
+            if end_excl:
+                tq = tq.filter(T.date < end_excl)
+            transfers = tq.order_by(T.date.desc(), T.id.desc()).limit(MAX_EXPORT_ROWS).all()
+            pd.DataFrame(
+                [
+                    {
+                        "التاريخ": t.date,
+                        "المنتج": t.product.name if t.product else None,
+                        "SKU": t.product.sku if t.product else None,
+                        "الكمية": t.quantity,
+                        "من موقع": idx.full_code(t.from_location_id),
+                        "إلى موقع": idx.full_code(t.to_location_id),
+                        "اللي نقل": format_user_display(t.moved_by, t.moved_by_username),
+                        "ملاحظات": t.notes,
+                    }
+                    for t in transfers
+                ],
+                columns=["التاريخ", "المنتج", "SKU", "الكمية", "من موقع", "إلى موقع", "اللي نقل", "ملاحظات"],
+            ).pipe(_safe_df).to_excel(writer, index=False, sheet_name="النقل بين المواقع")
     buffer.seek(0)
 
     filename = f"movements_export_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
@@ -453,7 +544,7 @@ def export_movements(db: Session = Depends(get_db), current_user: models.User = 
 
 # ---------- سجل تعديلات الكمية اليدوية - مش ظاهر في الموقع، تحميل فقط (للأدمن) ----------
 @router.get("/quantity-adjustments/export")
-def export_quantity_adjustments(db: Session = Depends(get_db), admin: models.User = Depends(auth.require_admin)):
+def export_quantity_adjustments(db: Session = Depends(get_db), admin: models.User = Depends(auth.require_permission("reports.view"))):
     logs = db.query(models.QuantityAdjustment).order_by(models.QuantityAdjustment.date.desc()).all()
     data = [
         {

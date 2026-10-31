@@ -39,7 +39,7 @@ def list_recipients(
     page: Optional[int] = None,  # من غير page = القايمة كلها (للتوافق)
     page_size: int = 15,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("recipients.view")),
 ):
     """جهات الاستلام - مع page/page_size الترقيم والبحث بيحصلوا في قاعدة البيانات والتجميع بيتحسب للصفحة دي بس."""
     M = models.Recipient
@@ -64,7 +64,7 @@ def lookup_recipients(
     q: str = "",
     limit: int = 20,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_any_permission("recipients.view", "stock_out.create")),
 ):
     """بحث سريع وخفيف للقوايم المنسدلة (أقصى 50 نتيجة)."""
     M = models.Recipient
@@ -78,7 +78,7 @@ def lookup_recipients(
 def create_recipient(
     payload: schemas.RecipientCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_any_permission("recipients.manage", "stock_out.create")),
 ):
     recipient = models.Recipient(**payload.model_dump())
     db.add(recipient)
@@ -105,7 +105,7 @@ def update_recipient(
     recipient_id: int,
     payload: schemas.RecipientCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("recipients.manage")),
 ):
     entity = db.query(models.Recipient).filter(models.Recipient.id == recipient_id).first()
     if not entity:
@@ -131,7 +131,7 @@ def update_recipient(
 def delete_recipient(
     recipient_id: int,
     db: Session = Depends(get_db),
-    admin: models.User = Depends(auth.require_admin),
+    admin: models.User = Depends(auth.require_permission("recipients.delete")),
 ):
     recipient = db.query(models.Recipient).filter(models.Recipient.id == recipient_id).first()
     if not recipient:

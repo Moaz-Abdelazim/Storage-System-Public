@@ -1,2 +1,2 @@
 import { registerCrud } from "./simple-crud.js";
-registerCrud("categories", { base: "/api/categories", noun: "تصنيف", filterParam: "category_id" });
+registerCrud("categories", { base: "/api/categories", noun: "تصنيف", managePerm: "catalog.manage", deletePerm: "catalog.delete", filterParam: "category_id" });

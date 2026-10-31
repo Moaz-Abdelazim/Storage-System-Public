@@ -15,7 +15,7 @@ export class ApiError extends Error {
   }
 }
 
-const AUTH_KEYS = ["username", "role", "full_name", "token"];
+const AUTH_KEYS = ["username", "role", "role_id", "full_name", "token", "perms", "is_admin"];
 
 export function clearAuthHints() {
   AUTH_KEYS.forEach((k) => localStorage.removeItem(k));
@@ -78,7 +78,12 @@ export async function request(path, { method = "GET", body, headers = {}, signal
   if ((res.headers.get("content-type") || "").includes("json")) {
     try { data = await res.json(); } catch (e) { /* no body */ }
   }
-  if (!res.ok) throw new ApiError(res.status, parseDetail(data) || "حصل خطأ غير متوقع", data);
+  if (!res.ok) {
+    const message = parseDetail(data) || "حصل خطأ غير متوقع";
+    // الدور اتوقف من الأدمن وإحنا جوه جلسة مفتوحة: الـ shell بيعرض الرسالة ويخرّج المستخدم
+    if (res.status === 403 && message.includes("الدور بتاعك موقوف")) window.dispatchEvent(new CustomEvent("app-role-disabled", { detail: message }));
+    throw new ApiError(res.status, message, data);
+  }
   return data;
 }
 

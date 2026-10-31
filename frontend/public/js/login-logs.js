@@ -1,4 +1,5 @@
 // login-logs.js — سجل جلسات الدخول (أدمن) مع إنهاء جلسة بالقوة
+import { can } from "./auth.js";
 import { api, qs } from "./api.js";
 import { fmtDateTime, toast, errMsg, confirmAction } from "./utils.js";
 
@@ -12,6 +13,7 @@ function duration(l) {
 
 document.addEventListener("alpine:init", () => {
   window.Alpine.data("loginLogs", () => ({
+    canRevoke: can("sessions.revoke"),
     fmtDateTime, duration,
     rows: [], loading: true, error: "", page: 1, pages: 1, total: 0, size: 15,
     f: { user: "", ip: "", status: "", date_from: "", date_to: "" },

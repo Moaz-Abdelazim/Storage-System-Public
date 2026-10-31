@@ -3,7 +3,7 @@
 //  كل ودجت بتتحمّل لوحدها (لو واحدة فشلت الباقي يشتغل) وفيها skeleton وزر إعادة المحاولة.
 // =====================================================================
 import { api } from "./api.js";
-import { isAdmin, getUser } from "./auth.js";
+import { can, getUser } from "./auth.js";
 import { num, money, fmtDateTime, longToday, errMsg } from "./utils.js";
 
 const PALETTE = ["#10B981", "#3B82F6", "#F59E0B", "#8B5CF6", "#EC4899", "#94A3B8"];
@@ -131,7 +131,8 @@ function describeMovement(r, i) {
 
 document.addEventListener("alpine:init", () => {
   window.Alpine.data("dashboard", () => ({
-    admin: isAdmin(),
+    canMovements: can("invoices.view", "transfers.view"), canProducts: can("products.view"),
+    admin: can("finance.view"),  // كتلة القيم المالية (قيمة المخزون وإجماليات الصادر)
     user: getUser(),
     today: longToday(),
 

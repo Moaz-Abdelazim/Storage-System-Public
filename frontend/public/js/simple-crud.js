@@ -2,7 +2,7 @@
 //  simple-crud.js — صفحة بسيطة لكيان (اسم فقط) زي التصنيفات والماركات.
 // =====================================================================
 import { api, qs } from "./api.js";
-import { isAdmin } from "./auth.js";
+import { can } from "./auth.js";
 import { invalidateData } from "./data.js";
 import { num, fmtDate, toast, errMsg, confirmAction } from "./utils.js";
 
@@ -10,7 +10,7 @@ export function registerCrud(componentName, cfg) {
   // cfg: { base: "/api/categories", noun: "تصنيف", filterParam: "category_id" }
   document.addEventListener("alpine:init", () => {
     window.Alpine.data(componentName, () => ({
-      admin: isAdmin(), noun: cfg.noun,
+      canManage: can(cfg.managePerm), canDelete: can(cfg.deletePerm), noun: cfg.noun,
       rows: [], loading: true, error: "", search: "",
       page: 1, pages: 1, total: 0, size: 10, classified: 0,
       form: { open: false, id: null, name: "", saving: false, error: "" },

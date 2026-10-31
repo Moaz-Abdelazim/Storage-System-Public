@@ -1,0 +1,19 @@
+# الإصدارات دي هي اللي اتختبرت فعليًا (532+ اختبار على SQLite وMySQL 8) ومفيهاش ثغرات معروفة وقت التثبيت (pip-audit).
+# ممنوع ترقية أي حزمة من غير تشغيل الاختبارات + pip-audit (الـ CI بيعمل كده تلقائيًا).
+fastapi==0.162.0
+starlette==1.10.0
+uvicorn[standard]==0.54.0
+SQLAlchemy==2.0.55
+pydantic==2.12.5
+pydantic-settings==2.16.2
+PyJWT==2.15.1
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-multipart==0.0.32
+openpyxl==3.1.5
+pandas==2.3.3
+PyMySQL==1.2.3
+alembic==1.20.1
+cryptography==50.0.2
+python-dotenv==1.2.4
+tzdata==2026.6

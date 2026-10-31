@@ -7,10 +7,12 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import object_session
 from ..timezone_utils import now_cairo
 
-from .. import models, schemas, auth, invoice_calc
+from .. import models, schemas, auth, invoice_calc, permissions
 from ..database import get_db
 from ..display_utils import format_user_display
 from ..location_utils import LocationIndex, lock_products, resolve_receiving_location, transfer_to_dict
+from ..money import q3
+from ..services import inventory
 from ..query_helpers import contains, end_exclusive, invoice_totals, parse_dt
 
 router = APIRouter(prefix="/api/stock", tags=["Stock Movements"])
@@ -30,18 +32,6 @@ def _round_qty(value: float) -> float:
     return round(value, 3)
 
 
-def _add_to_location(db: Session, product_id: int, location_id: int, qty: float):
-    """بيزوّد كمية المنتج في موقع معيّن (وبينشئ الربط لو مش موجود)."""
-    db.flush()  # عشان أي ربط اتضاف في نفس الفاتورة يبان في الاستعلام
-    pl = db.query(models.ProductLocation).filter(
-        models.ProductLocation.product_id == product_id, models.ProductLocation.location_id == location_id
-    ).first()
-    if pl:
-        pl.quantity = _round_qty(pl.quantity + qty)
-    else:
-        db.add(models.ProductLocation(product_id=product_id, location_id=location_id, quantity=_round_qty(qty)))
-
-
 def _clamp_page(page: int) -> int:
     return max(1, page)
 
@@ -52,7 +42,7 @@ def _clamp_page_size(page_size: int, default: int, max_value: int) -> int:
     return min(page_size, max_value)
 
 
-def _in_invoice_to_out(inv: models.StockInInvoice, items_limit: Optional[int] = None) -> schemas.StockInInvoiceOut:
+def _in_invoice_to_out(inv: models.StockInInvoice, items_limit: Optional[int] = None, show_finance: bool = True) -> schemas.StockInInvoiceOut:
     all_items = inv.items
     total_value = sum((it.unit_price or 0) * it.quantity for it in all_items)
     shown_items = all_items[:items_limit] if items_limit is not None else all_items
@@ -69,14 +59,14 @@ def _in_invoice_to_out(inv: models.StockInInvoice, items_limit: Optional[int] = 
             schemas.StockInItemOut(
                 id=it.id, product_id=it.product_id,
                 product_name=it.product.name if it.product else None,
-                quantity=it.quantity, unit_price=it.unit_price,
+                quantity=it.quantity, unit_price=it.unit_price if show_finance else None,  # سعر الشراء: finance.view بس
                 location_id=it.location_id,
                 location_code=idx.full_code(it.location_id) if (idx and it.location_id) else None,
             )
             for it in shown_items
         ],
         items_total=len(all_items),
-        total_value=round(total_value, 2),
+        total_value=round(total_value, 2) if show_finance else None,
     )
 
 
@@ -121,9 +111,17 @@ def _out_totals(inv: models.StockOutInvoice, items) -> dict:
     return {"subtotal": sub, "discount_amount": 0.0, "tax_amount": 0.0, "grand_total": sub}
 
 
+def _check_discount_permission(user: models.User, payload) -> None:
+    """خصم أو ضريبة فعّالة (قيمة > 0) على الصادر محتاجة stock_out.discount."""
+    has_discount = bool(payload.discount_type) and (payload.discount_value or 0) > 0
+    has_tax = bool(payload.tax_type) and (payload.tax_value or 0) > 0
+    if (has_discount or has_tax) and not permissions.has_permission(user, "stock_out.discount"):
+        raise HTTPException(status_code=403, detail=f"ملكش صلاحية: {permissions.label_of('stock_out.discount')}")
+
+
 def _check_items_basic(items):
     for item in items:
-        if item.quantity <= 0:
+        if q3(item.quantity) <= 0:  # 0.0004 بيتقرّب لصفر - مرفوضة زيها زي الصفر
             raise HTTPException(status_code=400, detail="الكمية لازم تكون أكبر من صفر في كل الأصناف")
 
 
@@ -143,7 +141,7 @@ def _load_active_products(db: Session, items) -> dict:
 def add_stock_in(
     payload: schemas.StockInInvoiceCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("stock_in.create")),
 ):
     """
     فاتورة وارد: كل صنف بيدخل مخزن (warehouse_id) فيتحط تلقائيًا في مكان الاستلام الافتراضي بتاعه،
@@ -154,43 +152,45 @@ def add_stock_in(
         raise HTTPException(status_code=400, detail="لازم تضيف منتج واحد على الأقل في الفاتورة")
     _check_items_basic(payload.items)
 
-    idx = LocationIndex(db)
-    # بنحدد مكان كل صنف الأول (أخطاء المخزن/المكان تبان قبل ما نلمس أي حاجة)
-    targets = [resolve_receiving_location(idx, item.warehouse_id, item.location_id) for item in payload.items]
-    products = _load_active_products(db, payload.items)
+    def _tx():
+        idx = LocationIndex(db)
+        # بنحدد مكان كل صنف الأول (أخطاء المخزن/المكان تبان قبل ما نلمس أي حاجة)
+        targets = [resolve_receiving_location(idx, item.warehouse_id, item.location_id) for item in payload.items]
+        _load_active_products(db, payload.items)  # قفل المنتجات بترتيب ثابت + التأكد إنها مفعّلة
 
-    invoice = models.StockInInvoice(
-        supplier_id=payload.supplier_id,
-        received_by_id=current_user.id,
-        received_by_username=current_user.username,
-        notes=payload.notes,
-        date=now_cairo(),
-    )
-    db.add(invoice)
-    db.flush()  # عشان ناخد الـ id بتاع الفاتورة قبل ما نكمل
+        invoice = models.StockInInvoice(
+            supplier_id=payload.supplier_id,
+            received_by_id=current_user.id,
+            received_by_username=current_user.username,
+            notes=payload.notes,
+            date=now_cairo(),
+        )
+        db.add(invoice)
+        db.flush()  # عشان ناخد الـ id بتاع الفاتورة قبل ما نكمل
 
-    for item, target in zip(payload.items, targets):
-        product = products[item.product_id]
-        db.add(models.StockInItem(
-            invoice_id=invoice.id,
-            product_id=item.product_id,
-            quantity=item.quantity,
-            unit_price=item.unit_price,
-            location_id=target.id,
-        ))
-        product.quantity = _round_qty(product.quantity + item.quantity)
-        _add_to_location(db, item.product_id, target.id, item.quantity)
+        for item, target in zip(payload.items, targets):
+            db.add(models.StockInItem(
+                invoice_id=invoice.id,
+                product_id=item.product_id,
+                quantity=float(q3(item.quantity)),
+                unit_price=item.unit_price,
+                location_id=target.id,
+            ))
+            inventory.add_stock(db, item.product_id, target.id, item.quantity)
 
-    db.commit()
-    db.refresh(invoice)
-    return _in_invoice_to_out(invoice)
+        db.commit()
+        db.refresh(invoice)
+        return invoice
+
+    return _in_invoice_to_out(inventory.with_retry(db, _tx), show_finance=permissions.has_permission(current_user, "finance.view"))
 
 
 # ---------- فواتير الصادر: أدوات مشتركة بين الإنشاء والتعديل والمسح ----------
 def _plan_out_lines(idx: LocationIndex, products: dict, items) -> dict:
     """
-    بيجمّع المطلوب لكل (منتج + مكان) عشان لو نفس المنتج اتكرر في الفاتورة، وبيتأكد إن كل صنف له مكان سحب
-    موجود وإن الرصيد فيه كفاية. بيرجّع {(product_id, location_id): الكمية المطلوبة}.
+    بيجمّع المطلوب لكل (منتج + مكان) عشان لو نفس المنتج اتكرر في الفاتورة، وبيتأكد إن كل صنف له مكان سحب موجود.
+    بيرجّع {(product_id, location_id): الكمية المطلوبة}. فحص كفاية الرصيد نفسه بيحصل ذرّيًا جوه
+    services.inventory.remove_stock (مش هنا) - أي فحص هنا على قراءة عادية ممكن يبقى قديم على MySQL.
     """
     requested = {}
     for item in items:
@@ -200,50 +200,42 @@ def _plan_out_lines(idx: LocationIndex, products: dict, items) -> dict:
         if item.location_id not in idx.locations:
             raise HTTPException(status_code=404, detail="الموقع المختار مش موجود")
         key = (item.product_id, item.location_id)
-        requested[key] = requested.get(key, 0) + item.quantity
-
-    for (product_id, location_id), qty in requested.items():
-        product = products[product_id]
-        available = next((pl.quantity for pl in product.locations if pl.location_id == location_id), 0.0)
-        if _round_qty(available - qty) < 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"الكمية المتاحة من ({product.name}) في الموقع {idx.full_code(location_id)} هي {_round_qty(available)} وده أقل من المطلوب",
-            )
+        requested[key] = requested.get(key, 0) + q3(item.quantity)
     return requested
 
 
 def _apply_out_lines(db: Session, invoice, products: dict, items, requested: dict, prices: list) -> None:
-    """بيضيف أسطر الفاتورة وبيخصم الكميات من المنتج ومن الأماكن (مرة واحدة لكل منتج+مكان)."""
+    """بيضيف أسطر الفاتورة وبيخصم الكميات (مرة واحدة لكل منتج+مكان، بترتيب ثابت)."""
     for item, price in zip(items, prices):
-        product = products[item.product_id]
         db.add(models.StockOutItem(
             invoice_id=invoice.id,
             product_id=item.product_id,
-            quantity=item.quantity,
+            quantity=float(q3(item.quantity)),
             unit_price=price,
             location_id=item.location_id,
         ))
-        product.quantity = _round_qty(product.quantity - item.quantity)
-
-    for (product_id, location_id), qty in requested.items():
-        pl = next(p for p in products[product_id].locations if p.location_id == location_id)
-        pl.quantity = _round_qty(pl.quantity - qty)
-        if pl.quantity <= 0:
-            db.delete(pl)
+    for (product_id, location_id), qty in sorted(requested.items()):
+        inventory.remove_stock(db, product_id, location_id, qty)
 
 
 def _revert_out_items(db: Session, idx: LocationIndex, invoice: models.StockOutInvoice, products: dict) -> None:
     """بيرجّع كميات أصناف فاتورة الصادر للمخزون (لنفس الأماكن اللي اتسحبت منها). المنتجات لازم تكون مقفولة قبل كده."""
+    back = {}
+    legacy = {}
     for it in invoice.items:
-        product = products.get(it.product_id)
-        if product is None:
+        if it.product_id not in products:
             raise HTTPException(status_code=409, detail="منتج في الفاتورة مش موجود - مينفعش نرجّع الكمية")
         if it.location_id is not None and it.location_id not in idx.locations:
             raise HTTPException(status_code=409, detail="المكان اللي اتسحبت منه البضاعة اتمسح - مينفعش نرجّع الكمية")
-        product.quantity = _round_qty(product.quantity + it.quantity)
-        if it.location_id is not None:
-            _add_to_location(db, it.product_id, it.location_id, it.quantity)
+        if it.location_id is None:  # سطر قديم من غير مكان: بنرجّع الإجمالي بس
+            legacy[it.product_id] = legacy.get(it.product_id, 0) + q3(it.quantity)
+        else:
+            key = (it.product_id, it.location_id)
+            back[key] = back.get(key, 0) + q3(it.quantity)
+    for (product_id, location_id), qty in sorted(back.items()):
+        inventory.add_stock(db, product_id, location_id, qty)
+    for product_id, qty in sorted(legacy.items()):
+        inventory.adjust_product_total_only(db, product_id, qty)
 
 
 def _check_recipient(db: Session, recipient_id: Optional[int]) -> None:
@@ -268,7 +260,7 @@ def _lock_held_out_invoice(db: Session, invoice_id: int) -> models.StockOutInvoi
 def add_stock_out(
     payload: schemas.StockOutInvoiceCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("stock_out.create")),
 ):
     """
     فاتورة صادر. سعر كل صنف بيتاخد من سعر المنتج المسجّل في النظام وقت الإنشاء (أي unit_price جاي من العميل بيتتجاهل).
@@ -277,35 +269,39 @@ def add_stock_out(
     if not payload.items:
         raise HTTPException(status_code=400, detail="لازم تضيف منتج واحد على الأقل في الفاتورة")
     _check_items_basic(payload.items)
+    _check_discount_permission(current_user, payload)
     _check_recipient(db, payload.recipient_id)
 
-    idx = LocationIndex(db)
-    products = _load_active_products(db, payload.items)
-    requested = _plan_out_lines(idx, products, payload.items)
+    def _tx():
+        idx = LocationIndex(db)
+        products = _load_active_products(db, payload.items)
+        requested = _plan_out_lines(idx, products, payload.items)
 
-    prices = [float(products[i.product_id].price or 0) for i in payload.items]
-    totals = invoice_calc.compute_totals(
-        [(i.quantity, pr) for i, pr in zip(payload.items, prices)],
-        payload.discount_type, payload.discount_value, payload.tax_type, payload.tax_value,
-    )
+        prices = [float(products[i.product_id].price or 0) for i in payload.items]
+        totals = invoice_calc.compute_totals(
+            [(i.quantity, pr) for i, pr in zip(payload.items, prices)],
+            payload.discount_type, payload.discount_value, payload.tax_type, payload.tax_value,
+        )
 
-    invoice = models.StockOutInvoice(
-        recipient_id=payload.recipient_id,
-        delivered_by_id=current_user.id,
-        delivered_by_username=current_user.username,
-        notes=payload.notes,
-        date=now_cairo(),
-        status=payload.status,
-        **totals,
-    )
-    db.add(invoice)
-    db.flush()
+        invoice = models.StockOutInvoice(
+            recipient_id=payload.recipient_id,
+            delivered_by_id=current_user.id,
+            delivered_by_username=current_user.username,
+            notes=payload.notes,
+            date=now_cairo(),
+            status=payload.status,
+            **totals,
+        )
+        db.add(invoice)
+        db.flush()
 
-    _apply_out_lines(db, invoice, products, payload.items, requested, prices)
+        _apply_out_lines(db, invoice, products, payload.items, requested, prices)
 
-    db.commit()
-    db.refresh(invoice)
-    return _out_invoice_to_out(invoice)
+        db.commit()
+        db.refresh(invoice)
+        return invoice
+
+    return _out_invoice_to_out(inventory.with_retry(db, _tx))
 
 
 @router.put("/out/{invoice_id}", response_model=schemas.StockOutInvoiceOut)
@@ -313,7 +309,7 @@ def update_held_stock_out(
     invoice_id: int,
     payload: schemas.StockOutInvoiceUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("stock_out.manage_held")),
 ):
     """
     تعديل فاتورة صادر معلّقة بس (المقفولة ما بتتعدلش). بنرجّع كميات الأصناف القديمة لأماكنها ثم نطبّق الأصناف الجديدة
@@ -323,35 +319,34 @@ def update_held_stock_out(
     if not payload.items:
         raise HTTPException(status_code=400, detail="لازم تضيف منتج واحد على الأقل في الفاتورة")
     _check_items_basic(payload.items)
+    _check_discount_permission(current_user, payload)
     _check_recipient(db, payload.recipient_id)
 
-    invoice = _lock_held_out_invoice(db, invoice_id)
-    idx = LocationIndex(db)
-    old_items = sorted(invoice.items, key=lambda it: it.id)
-    old_prices = {it.product_id: it.unit_price for it in old_items if it.unit_price is not None}
+    def _tx():
+        invoice = _lock_held_out_invoice(db, invoice_id)
+        idx = LocationIndex(db)
+        old_items = sorted(invoice.items, key=lambda it: it.id)
+        old_prices = {it.product_id: it.unit_price for it in old_items if it.unit_price is not None}
 
-    ids = {it.product_id for it in old_items} | {i.product_id for i in payload.items}
-    products = lock_products(db, ids)
-    old_ids = {it.product_id for it in old_items}
-    for item in payload.items:
-        product = products.get(item.product_id)
-        if not product:
-            raise HTTPException(status_code=404, detail=f"منتج برقم {item.product_id} مش موجود")
-        if not product.is_active and item.product_id not in old_ids:
-            raise HTTPException(status_code=400, detail=f"المنتج ({product.name}) غير مفعّل - فعّله الأول من صفحة المنتجات")
+        ids = {it.product_id for it in old_items} | {i.product_id for i in payload.items}
+        products = lock_products(db, ids)
+        old_ids = {it.product_id for it in old_items}
+        for item in payload.items:
+            product = products.get(item.product_id)
+            if not product:
+                raise HTTPException(status_code=404, detail=f"منتج برقم {item.product_id} مش موجود")
+            if not product.is_active and item.product_id not in old_ids:
+                raise HTTPException(status_code=400, detail=f"المنتج ({product.name}) غير مفعّل - فعّله الأول من صفحة المنتجات")
 
-    prices = [old_prices.get(i.product_id, float(products[i.product_id].price or 0)) for i in payload.items]
-    totals = invoice_calc.compute_totals(
-        [(i.quantity, pr) for i, pr in zip(payload.items, prices)],
-        payload.discount_type, payload.discount_value, payload.tax_type, payload.tax_value,
-    )
+        prices = [old_prices.get(i.product_id, float(products[i.product_id].price or 0)) for i in payload.items]
+        totals = invoice_calc.compute_totals(
+            [(i.quantity, pr) for i, pr in zip(payload.items, prices)],
+            payload.discount_type, payload.discount_value, payload.tax_type, payload.tax_value,
+        )
 
-    try:
         _revert_out_items(db, idx, invoice, products)
         invoice.items.clear()
         db.flush()
-        for product in products.values():
-            db.expire(product, ["locations"])
         requested = _plan_out_lines(idx, products, payload.items)
         _apply_out_lines(db, invoice, products, payload.items, requested, prices)
         invoice.recipient_id = payload.recipient_id
@@ -359,18 +354,17 @@ def update_held_stock_out(
         for key, value in totals.items():
             setattr(invoice, key, value)
         db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    db.refresh(invoice)
-    return _out_invoice_to_out(invoice)
+        db.refresh(invoice)
+        return invoice
+
+    return _out_invoice_to_out(inventory.with_retry(db, _tx))
 
 
 @router.post("/out/{invoice_id}/complete", response_model=schemas.StockOutInvoiceOut)
 def complete_held_stock_out(
     invoice_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("stock_out.manage_held")),
 ):
     """إتمام فاتورة صادر معلّقة: بتتقفل نهائيًا (مفيش تعديل ولا مسح بعد كده)."""
     invoice = _lock_held_out_invoice(db, invoice_id)
@@ -384,19 +378,18 @@ def complete_held_stock_out(
 def delete_held_stock_out(
     invoice_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("stock_out.manage_held")),
 ):
     """مسح فاتورة صادر معلّقة بس: الكميات بترجع للمخزون ولنفس الأماكن اللي اتسحبت منها، والفاتورة بتتمسح نهائيًا."""
-    invoice = _lock_held_out_invoice(db, invoice_id)
-    idx = LocationIndex(db)
-    products = lock_products(db, {it.product_id for it in invoice.items})
-    try:
+    def _tx():
+        invoice = _lock_held_out_invoice(db, invoice_id)
+        idx = LocationIndex(db)
+        products = lock_products(db, {it.product_id for it in invoice.items})
         _revert_out_items(db, idx, invoice, products)
         db.delete(invoice)
         db.commit()
-    except Exception:
-        db.rollback()
-        raise
+
+    inventory.with_retry(db, _tx)
     return {"message": "تم مسح الفاتورة المعلّقة وإرجاع الكميات للمخزون"}
 
 
@@ -404,7 +397,7 @@ def delete_held_stock_out(
 def held_out_edit_data(
     invoice_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("stock_out.manage_held")),
 ):
     """
     كل اللي شاشة تعديل فاتورة معلّقة محتاجاه في ضربة واحدة (من غير طلب لكل صنف): الأسطر ببيانات منتجاتها
@@ -464,7 +457,7 @@ def list_stock_in(
     page: int = 1,
     page_size: int = INVOICE_LIST_PAGE_SIZE_DEFAULT,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("invoices.view")),
 ):
     """
     ترقيم كامل من الباك اند: كل صفحة بتجيب عدد محدود من الفواتير بس (LIMIT/OFFSET
@@ -485,7 +478,7 @@ def list_stock_in(
         .all()
     )
     return {
-        "items": [_in_invoice_to_out(r, items_limit=0) for r in rows],
+        "items": [_in_invoice_to_out(r, items_limit=0, show_finance=permissions.has_permission(current_user, "finance.view")) for r in rows],
         "total": total,
         "page": page,
         "page_size": page_size,
@@ -497,13 +490,13 @@ def list_stock_in(
 def get_stock_in_invoice(
     invoice_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("invoices.view")),
 ):
     """تفاصيل فاتورة وارد واحدة كاملة (كل الأصناف من غير أي حد أقصى)."""
     inv = db.query(models.StockInInvoice).filter(models.StockInInvoice.id == invoice_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="الفاتورة مش موجودة")
-    return _in_invoice_to_out(inv)
+    return _in_invoice_to_out(inv, show_finance=permissions.has_permission(current_user, "finance.view"))
 
 
 @router.get("/out")
@@ -511,7 +504,7 @@ def list_stock_out(
     page: int = 1,
     page_size: int = INVOICE_LIST_PAGE_SIZE_DEFAULT,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("invoices.view")),
 ):
     """نفس فكرة ترقيم /api/stock/in بالظبط لكن لفواتير الصادر - ملخص بس من غير أصناف."""
     page = _clamp_page(page)
@@ -539,7 +532,7 @@ def list_stock_out(
 def get_stock_out_invoice(
     invoice_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("invoices.view")),
 ):
     """تفاصيل فاتورة صادر واحدة كاملة (كل الأصناف من غير أي حد أقصى)."""
     inv = db.query(models.StockOutInvoice).filter(models.StockOutInvoice.id == invoice_id).first()
@@ -647,7 +640,7 @@ def stock_log(
     page: int = 1,
     page_size: int = LOG_PAGE_SIZE_DEFAULT,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_any_permission("invoices.view", "transfers.view")),
 ):
     """
     سجل موحّد وقابل للفلترة لكل فواتير الوارد والصادر وحركات النقل.
@@ -662,10 +655,14 @@ def stock_log(
     page = _clamp_page(page)
     page_size = _clamp_page_size(page_size, LOG_PAGE_SIZE_DEFAULT, LOG_PAGE_SIZE_MAX)
 
+    # كل نوع بيظهر بصلاحيته: in/out ← invoices.view، transfer ← transfers.view. النوع غير المسموح بيتشال من النتيجة والإجماليات.
+    can_invoices = permissions.has_permission(current_user, "invoices.view")
+    can_transfers = permissions.has_permission(current_user, "transfers.view")
+    show_finance = permissions.has_permission(current_user, "finance.view")
     want = {
-        "in": kind in (None, "", "all", "in"),
-        "out": kind in (None, "", "all", "out"),
-        "transfer": kind in (None, "", "all", "transfer"),
+        "in": can_invoices and kind in (None, "", "all", "in"),
+        "out": can_invoices and kind in (None, "", "all", "out"),
+        "transfer": can_transfers and kind in (None, "", "all", "transfer"),
     }
     window = page * page_size  # أقصى عدد صفوف محتاجينه من كل نوع (offset + page_size)
 
@@ -737,7 +734,7 @@ def stock_log(
                 "kind": "in", "invoice_id": inv.id, "date": inv.date, "party_role": "المورد",
                 "party_name": inv.supplier.name if inv.supplier else None, "user_role": "استلمها",
                 "user_name": format_user_display(inv.received_by, inv.received_by_username),
-                "notes": inv.notes, "items": [], "items_total": n, "total_value": val,
+                "notes": inv.notes, "items": [], "items_total": n, "total_value": val if show_finance else None,
             }
     if ids["out"]:
         Inv = models.StockOutInvoice
@@ -771,7 +768,7 @@ def stock_log(
         "total_pages": max(1, math.ceil(total_filtered / page_size)) if total_filtered else 1,
         "totals": {
             "in_invoices_count": counts["in"],
-            "in_total_value": round(values["in"], 2),
+            "in_total_value": round(values["in"], 2) if show_finance else None,  # قيمة الوارد = سعر شراء: finance.view بس
             "out_invoices_count": counts["out"],
             "out_total_value": round(values["out"], 2),
             "transfers_count": counts["transfer"],

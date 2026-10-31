@@ -39,7 +39,7 @@ def list_suppliers(
     page: Optional[int] = None,  # من غير page = القايمة كلها (للتوافق)
     page_size: int = 15,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("suppliers.view")),
 ):
     """الموردين - مع page/page_size الترقيم والبحث بيحصلوا في قاعدة البيانات والتجميع بيتحسب للصفحة دي بس."""
     M = models.Supplier
@@ -64,7 +64,7 @@ def lookup_suppliers(
     q: str = "",
     limit: int = 20,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_any_permission("suppliers.view", "stock_in.create")),
 ):
     """بحث سريع وخفيف للقوايم المنسدلة (أقصى 50 نتيجة)."""
     M = models.Supplier
@@ -78,7 +78,7 @@ def lookup_suppliers(
 def create_supplier(
     payload: schemas.SupplierCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_any_permission("suppliers.manage", "stock_in.create")),
 ):
     supplier = models.Supplier(**payload.model_dump())
     db.add(supplier)
@@ -105,7 +105,7 @@ def update_supplier(
     supplier_id: int,
     payload: schemas.SupplierCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("suppliers.manage")),
 ):
     entity = db.query(models.Supplier).filter(models.Supplier.id == supplier_id).first()
     if not entity:
@@ -131,7 +131,7 @@ def update_supplier(
 def delete_supplier(
     supplier_id: int,
     db: Session = Depends(get_db),
-    admin: models.User = Depends(auth.require_admin),
+    admin: models.User = Depends(auth.require_permission("suppliers.delete")),
 ):
     supplier = db.query(models.Supplier).filter(models.Supplier.id == supplier_id).first()
     if not supplier:

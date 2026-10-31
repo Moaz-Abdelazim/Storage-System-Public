@@ -96,7 +96,7 @@ def get_company(db: Session = Depends(get_db), current_user: models.User = Depen
 
 
 @router.put("")
-def update_company(payload: CompanyIn, db: Session = Depends(get_db), admin: models.User = Depends(auth.require_admin)):
+def update_company(payload: CompanyIn, db: Session = Depends(get_db), admin: models.User = Depends(auth.require_permission("settings.company"))):
     row = _get_row(db)
     row.name, row.phone1, row.phone2 = payload.name, payload.phone1, payload.phone2
     db.commit()
@@ -108,7 +108,7 @@ def upload_logo(
     request: Request,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    admin: models.User = Depends(auth.require_admin),
+    admin: models.User = Depends(auth.require_permission("settings.company")),
 ):
     length = request.headers.get("content-length")
     if length and length.isdigit() and int(length) > MAX_LOGO_BYTES + 64 * 1024:
@@ -128,7 +128,7 @@ def upload_logo(
 
 
 @router.delete("/logo")
-def delete_logo(db: Session = Depends(get_db), admin: models.User = Depends(auth.require_admin)):
+def delete_logo(db: Session = Depends(get_db), admin: models.User = Depends(auth.require_permission("settings.company"))):
     row = _get_row(db)
     row.logo = row.logo_mime = row.logo_etag = None
     db.commit()

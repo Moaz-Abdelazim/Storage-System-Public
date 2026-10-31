@@ -16,12 +16,12 @@
 <body>
 <noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
 
-<div id="shell" data-active="suppliers" data-title="الموردين">
+<div id="shell" data-perm="suppliers.view" data-active="suppliers" data-title="الموردين">
   <div x-data="suppliers" class="space-y-5">
 
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div><h1 class="text-2xl font-bold">الموردين</h1><p class="mt-1 text-sm text-muted">الجهات اللي بتورّد لك بضاعة وسجل التعامل معاها</p></div>
-      <button type="button" class="btn btn-primary" @click="openForm()"><i class="fa-solid fa-plus"></i>إضافة مورد</button>
+      <button type="button" class="btn btn-primary" x-show="canManage" @click="openForm()"><i class="fa-solid fa-plus"></i>إضافة مورد</button>
     </div>
 
     <div class="grid gap-4 sm:grid-cols-3">
@@ -45,8 +45,8 @@
                 <td class="tabular-nums" x-text="num(r.total_quantity)"></td>
                 <td><div class="flex items-center gap-0.5">
                   <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="المنتجات والفواتير" @click="openDetail(r)"><i class="fa-regular fa-eye"></i></button>
-                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تعديل" @click="openForm(r)"><i class="fa-solid fa-pen"></i></button>
-                  <template x-if="admin"><button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8 text-red-500" title="حذف" @click="remove(r)"><i class="fa-solid fa-trash-can"></i></button></template>
+                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تعديل" x-show="canManage" @click="openForm(r)"><i class="fa-solid fa-pen"></i></button>
+                  <template x-if="canDelete"><button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8 text-red-500" title="حذف" @click="remove(r)"><i class="fa-solid fa-trash-can"></i></button></template>
                 </div></td>
               </tr>
             </template>

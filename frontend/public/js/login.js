@@ -1,5 +1,6 @@
 // صفحة تسجيل الدخول (من غير الـ shell)
 import { api, ApiError } from "./api.js";
+import { storeUser } from "./auth.js";
 import { getQuery } from "./utils.js";
 import { toggleTheme } from "./theme.js";
 
@@ -17,15 +18,11 @@ document.addEventListener("alpine:init", () => {
       // لو فيه جلسة شغالة نروح للصفحة الرئيسية على طول
       try {
         const me = await api.get("/api/auth/me");
-        if (me) { this.store(me); location.replace(nextPage()); }
+        if (me && me.role_active !== false) { this.store(me); location.replace(nextPage()); }  // دور موقوف: نفضل في صفحة الدخول بدل ما ندور في لفة
       } catch (e) { /* مفيش جلسة */ }
     },
 
-    store(u) {
-      localStorage.setItem("username", u.username);
-      localStorage.setItem("role", u.role);
-      if (u.full_name) localStorage.setItem("full_name", u.full_name); else localStorage.removeItem("full_name");
-    },
+    store(u) { storeUser(u); },
 
     async submit() {
       this.error = "";

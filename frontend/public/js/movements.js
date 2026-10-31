@@ -1,6 +1,7 @@
 // =====================================================================
 //  movements.js — سجل الحركات الموحّد (وارد / صادر / نقل) بفلاتر وترقيم من السيرفر.
 // =====================================================================
+import { can } from "./auth.js";
 import { api, qs, download } from "./api.js";
 import { num, money, fmtDateTime, toast, errMsg, KIND, getQuery, setQuery, todayISO, daysAgoISO } from "./utils.js";
 
@@ -20,7 +21,8 @@ document.addEventListener("alpine:init", () => {
     rows: [], totals: null, loading: true, error: "", exporting: false,
     page: 1, pages: 1, total: 0, size: 15,
     f: { kind: getQuery("kind"), date_from: getQuery("date_from"), date_to: getQuery("date_to"), party: getQuery("party"), user: "" },
-    kinds: [{ key: "", label: "الكل" }, { key: "in", label: "وارد" }, { key: "out", label: "صادر" }, { key: "transfer", label: "نقل" }],
+    kinds: [{ key: "", label: "الكل" }, { key: "in", label: "وارد" }, { key: "out", label: "صادر" }, { key: "transfer", label: "نقل" }]
+      .filter((k) => !k.key || (k.key === "transfer" ? can("transfers.view") : can("invoices.view"))),
     presets: [{ label: "اليوم", days: 0 }, { label: "آخر 7 أيام", days: 6 }, { label: "آخر 30 يوم", days: 29 }, { label: "كل الفترة", days: null }],
 
     init() { this.load(); },

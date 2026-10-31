@@ -27,7 +27,7 @@ const withMore = (opts, more) => { opts.truncated = !!more; return opts; };
 export async function searchProducts(q) {
   const rows = await api.get(`/api/products/lookup${qs({ q, limit: LIMIT })}`);
   return withMore(rows.map((p) => ({
-    value: p.id, label: p.name, sub: `${p.sku ? p.sku + " · " : ""}${num(p.quantity)} ${p.unit || ""}`, data: p,
+    value: p.id, label: p.name, sub: `${p.barcode || p.sku ? (p.barcode || p.sku) + " · " : ""}${num(p.quantity)} ${p.unit || ""}`, data: p,
   })), rows.length >= LIMIT);
 }
 

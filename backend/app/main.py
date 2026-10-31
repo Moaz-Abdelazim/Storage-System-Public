@@ -1,4 +1,7 @@
+import logging
 import os
+import time
+import socket
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -8,33 +11,34 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from dotenv import load_dotenv
 
-import socket
 
-def get_local_ip():
+def _dev_local_ip() -> str:
+    """
+    عنوان الجهاز على الشبكة المحلية. بيتستخدم في بيئة التطوير بس (عشان تفتح النظام من موبايل/جهاز تاني
+    على نفس الشبكة). في production مبيتنادّاش خالص ومفيش أي socket بيتفتح. الـ UDP connect مبيبعتش
+    أي بيانات - بيسأل نظام التشغيل بس عن الـ interface اللي هيطلع منه.
+    """
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
     except Exception:
         return "127.0.0.1"
 
 
-from . import models, auth
-from .database import engine, SessionLocal, Base
-from .migrations import ensure_schema
-from .routers import auth as auth_router
+from . import auth
+from .services.inventory import InsufficientStock, InconsistentStock
+from . import observability
+from .database import engine
+from .routers import auth as auth_router, roles as roles_router
 from .routers import products, suppliers, recipients, stock, reports, excel_io, categories, brands, locations, location_nav, dashboard, analytics, executive_report, company, invoice_print
 
 load_dotenv()
 
-# ينشئ الجداول لو مش موجودة + يضيف الأعمدة الجديدة لو الجداول موجودة من إصدار أقدم
-# Base.metadata.create_all(bind=engine)
-# ensure_schema(engine)
-
 IS_PRODUCTION = auth.IS_PRODUCTION
 # في الـ production صفحات التوثيق التفاعلية (/docs و /redoc و /openapi.json) بتتقفل عشان ما تكشفش شكل الـ API
+observability.setup_logging()
+
 app = FastAPI(
     title="نظام إدارة المخازن - Inventory System",
     version="1.1.0",
@@ -55,6 +59,16 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
         field = ".".join(str(p) for p in err.get("loc", []) if p not in ("body", "query", "path"))
         messages.append(f"{field}: {msg}" if field and not any("\u0600" <= ch <= "\u06ff" for ch in msg) else msg)
     return JSONResponse(status_code=422, content={"detail": " | ".join(messages[:5]) or "بيانات غير صالحة"})
+
+
+@app.exception_handler(InsufficientStock)
+async def insufficient_stock_handler(request: Request, exc: InsufficientStock):
+    return JSONResponse(status_code=400, content={"detail": exc.message})
+
+
+@app.exception_handler(InconsistentStock)
+async def inconsistent_stock_handler(request: Request, exc: InconsistentStock):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
 # ---------- أمان: هيدرز + حد لحجم الطلب ----------
@@ -103,33 +117,37 @@ async def security_middleware(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def request_context_middleware(request: Request, call_next):
+    """request id لكل طلب (header + log) عشان أي خطأ يتتبع، وسطر log واحد لكل طلب (من غير query string)."""
+    started = time.perf_counter()
+    rid = observability.new_request_id(request.headers.get("x-request-id"))
+    request.state.request_id = rid
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = rid
+    if request.url.path.startswith("/api/"):
+        observability.log_request(rid, request.method, request.url.path, response.status_code, started)
+    return response
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """أي خطأ غير متوقع: بنسجّل التفاصيل في اللوج، والعميل ياخد رسالة عامة + request_id بس (من غير تسريب داخلي)."""
+    rid = getattr(request.state, "request_id", None) or observability.new_request_id()
+    logging.getLogger("app.error").exception("unhandled error rid=%s %s %s", rid, request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "حصل خطأ داخلي. لو المشكلة فضلت، ابعت رقم الطلب للدعم.", "request_id": rid},
+                        headers={"X-Request-ID": rid})
+
+
 # (الـ middleware ده بيتسجل قبل CORS عشان CORS يفضل الطبقة الخارجية وردود 429/413 توصل للمتصفح بشكل سليم)
-LOCAL_IP = get_local_ip()
 # ---------- أمان: مفيش "allow_origins=*" هنا، بس الدومينات/العناوين اللي محددة ----------
 # ممكن تتحكم فيها من .env بمتغير ALLOWED_ORIGINS (مفصولة بفاصلة)، ولو مش موجود بيستخدم الافتراضي ده
-# DEFAULT_ORIGINS = [
-#     "http://100.79.19.41",
-#     "https://100.79.19.41",
-
-#     "http://192.168.1.12",
-#     "https://192.168.1.12",
-
-#     "http://localhost:80",
-#     "https://localhost:80",
-#     "http://localhost",
-#     "https://localhost",
-#     "http://127.0.0.1:80",
-#     "https://127.0.0.1:80",
-
-#     "http://stock-management-system.taild502ee.ts.net",
-#     "https://stock-management-system.taild502ee.ts.net",
-# ]
-
 _env_origins = os.getenv("ALLOWED_ORIGINS", "")
 ALLOWED_ORIGINS = [o.strip() for o in _env_origins.split(",") if o.strip()]
-if not IS_PRODUCTION:  # في الـ production بس اللي متحدد في ALLOWED_ORIGINS
-    ALLOWED_ORIGINS.append(f"http://{LOCAL_IP}")
-    ALLOWED_ORIGINS.append(f"https://{LOCAL_IP}")
+_DEV_LAN_IP = None if IS_PRODUCTION else _dev_local_ip()  # في الـ production بس اللي متحدد في ALLOWED_ORIGINS
+if _DEV_LAN_IP:
+    ALLOWED_ORIGINS.append(f"http://{_DEV_LAN_IP}")
+    ALLOWED_ORIGINS.append(f"https://{_DEV_LAN_IP}")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -141,14 +159,14 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # ---------- أمان إضافي: رفض أي طلب بعنوان Host مش معروف (يمنع هجمات Host header) ----------
-# DEFAULT_HOSTS = ["100.79.19.41", "localhost", "127.0.0.1", "stock-management-system.taild502ee.ts.net"]
 _env_hosts = os.getenv("ALLOWED_HOSTS", "")
 ALLOWED_HOSTS = [h.strip() for h in _env_hosts.split(",") if h.strip()]
-if not IS_PRODUCTION:
-    ALLOWED_HOSTS.append(f"{LOCAL_IP}")
+if _DEV_LAN_IP:
+    ALLOWED_HOSTS.append(_DEV_LAN_IP)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 app.include_router(auth_router.router)
+app.include_router(roles_router.router)
 app.include_router(categories.router)
 app.include_router(brands.router)
 app.include_router(products.router)
@@ -165,35 +183,16 @@ app.include_router(executive_report.router)
 app.include_router(company.router)
 app.include_router(invoice_print.router)
 
-# @app.on_event("startup")
-# def create_first_admin():
-#     db = SessionLocal()
-#     try:
-#         admin_username = (os.getenv("FIRST_ADMIN_USERNAME") or "").strip()
-#         admin_password = os.getenv("FIRST_ADMIN_PASSWORD") or ""
-#         if db.query(models.User).count() > 0 and not admin_username:
-#             return  # فيه مستخدمين بالفعل ومفيش أدمن أولي مطلوب
-#         if not admin_username or not admin_password:
-#             print("⚠ FIRST_ADMIN_USERNAME / FIRST_ADMIN_PASSWORD مش متحددين في .env - مفيش حساب أدمن اتعمل")
-#             return
-#         if IS_PRODUCTION and len(admin_password) < 10:
-#             raise RuntimeError("FIRST_ADMIN_PASSWORD لازم يكون 10 حروف على الأقل في الـ production")
-#         existing = db.query(models.User).filter(models.User.username == admin_username).first()
-#         if not existing:
-#             admin = models.User(
-#                 username=admin_username,
-#                 full_name="مدير النظام",
-#                 password_hash=auth.get_password_hash(admin_password),
-#                 role="admin",
-#             )
-#             db.add(admin)
-#             db.commit()
-#             print(f"✔ تم إنشاء حساب الأدمن الأول: {admin_username}")
-#     finally:
-#         db.close()
-
-
 @app.get("/api/health")
 def health_check():
+    """liveness: التطبيق شغّال (من غير ما نلمس الـ DB)."""
     return {"status": "ok", "message": "السيرفر شغال"}
-print("Restart")
+
+
+@app.get("/api/ready")
+def readiness_check():
+    """readiness: الـ DB بترد والـ schema على آخر migration. 503 لو لأ (الـ load balancer يشيل الـ instance)."""
+    result = observability.readiness(engine)
+    if not result["ready"]:
+        return JSONResponse(status_code=503, content={"status": "not_ready", "reason": result["reason"]})
+    return {"status": "ready"}

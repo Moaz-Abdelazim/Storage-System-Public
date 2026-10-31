@@ -16,7 +16,7 @@
 <body>
 <noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
 
-<div id="shell" data-active="products" data-title="المنتجات">
+<div id="shell" data-perm="products.view" data-active="products" data-title="المنتجات">
   <div x-data="products" class="space-y-5">
 
     <!-- ===== العنوان ===== -->
@@ -28,7 +28,7 @@
       <div class="flex flex-wrap items-center gap-2">
         <button type="button" class="btn btn-outline" @click="exportExcel()" :disabled="exporting"><i class="fa-solid fa-file-excel text-green-600"></i>تصدير Excel</button>
         <a href="settings.html#import" class="btn btn-outline"><i class="fa-solid fa-file-import"></i>استيراد</a>
-        <button type="button" class="btn btn-primary" @click="openForm()"><i class="fa-solid fa-plus"></i>إضافة منتج</button>
+        <button type="button" class="btn btn-primary" x-show="canCreate" @click="openForm()"><i class="fa-solid fa-plus"></i>إضافة منتج</button>
       </div>
     </div>
 
@@ -37,7 +37,7 @@
       <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-12">
         <div class="relative md:col-span-2 xl:col-span-4">
           <i class="fa-solid fa-magnifying-glass pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-sm text-muted"></i>
-          <input type="search" class="input ps-10" placeholder="ابحث بالاسم أو الـ SKU..." x-model="filters.search" @input.debounce.350ms="applyFilters()" aria-label="بحث">
+          <input type="search" class="input ps-10" placeholder="الاسم أو الـ SKU أو الباركود" x-model="filters.search" @input.debounce.350ms="applyFilters()" aria-label="بحث">
         </div>
         <div class="xl:col-span-2"><ui-select source="categories" placeholder="كل التصنيفات" clearable x-effect="$el.value = filters.category_id" @pick="filters.category_id = $event.detail.value; applyFilters()"></ui-select></div>
         <div class="xl:col-span-2"><ui-select source="brands" placeholder="كل الماركات" clearable x-effect="$el.value = filters.brand_id" @pick="filters.brand_id = $event.detail.value; applyFilters()"></ui-select></div>
@@ -76,7 +76,7 @@
                 <td>
                   <button type="button" class="text-start" @click="openDetail(p)">
                     <div class="font-medium hover:text-brand-600" x-text="p.name"></div>
-                    <div class="mt-0.5" x-show="p.sku"><span class="code-chip" x-text="p.sku"></span></div>
+                    <div class="mt-0.5 flex flex-wrap gap-1" x-show="p.sku || p.barcode"><span class="code-chip" x-show="p.sku" x-text="p.sku"></span><span class="code-chip" x-show="p.barcode"><i class="fa-solid fa-barcode"></i> <span x-text="p.barcode"></span></span></div>
                   </button>
                 </td>
                 <td>
@@ -106,9 +106,9 @@
                 <td>
                   <div class="flex items-center gap-0.5">
                     <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تفاصيل وحركات" @click="openDetail(p)"><i class="fa-regular fa-eye"></i></button>
-                    <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="توزيع الكمية على الأماكن" @click="openLocations(p)"><i class="fa-solid fa-location-dot"></i></button>
-                    <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تعديل" @click="openForm(p)"><i class="fa-solid fa-pen"></i></button>
-                    <template x-if="admin"><button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" :title="p.is_active === false ? 'تفعيل' : 'تعطيل'" @click="toggleActive(p)"><i class="fa-solid" :class="p.is_active === false ? 'fa-toggle-off' : 'fa-toggle-on text-brand-500'"></i></button></template>
+                    <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="توزيع الكمية على الأماكن" x-show="canAdjust" @click="openLocations(p)"><i class="fa-solid fa-location-dot"></i></button>
+                    <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تعديل" x-show="canEdit" @click="openForm(p)"><i class="fa-solid fa-pen"></i></button>
+                    <template x-if="canToggle"><button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" :title="p.is_active === false ? 'تفعيل' : 'تعطيل'" @click="toggleActive(p)"><i class="fa-solid" :class="p.is_active === false ? 'fa-toggle-off' : 'fa-toggle-on text-brand-500'"></i></button></template>
                   </div>
                 </td>
               </tr>
@@ -132,15 +132,16 @@
           <div class="grid gap-4 sm:grid-cols-2">
             <div class="sm:col-span-2"><label class="label">اسم المنتج *</label><input type="text" class="input" x-model.trim="form.name" maxlength="150" required :class="form.errors.name && 'border-red-400'"><p class="field-err" x-text="form.errors.name" x-show="form.errors.name"></p></div>
             <div><label class="label">كود المنتج (SKU)</label><input type="text" class="input" dir="ltr" x-model.trim="form.sku" maxlength="50" placeholder="اختياري"></div>
+            <div><label class="label">الباركود</label><input type="text" class="input" dir="ltr" x-model.trim="form.barcode" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="اختياري - امسحه بالقارئ أو اكتبه" @keydown.enter.prevent></div>
             <div><label class="label">الوحدة</label><input type="text" class="input" x-model.trim="form.unit" list="units" maxlength="30"><datalist id="units"><option value="قطعة"><option value="علبة"><option value="كرتونة"><option value="كيلو"><option value="لتر"><option value="متر"></datalist></div>
             <div><label class="label">التصنيف</label><ui-select source="categories" placeholder="بدون تصنيف" clearable x-effect="$el.value = form.category_id" @pick="form.category_id = $event.detail.value"></ui-select></div>
             <div><label class="label">الماركة</label><ui-select source="brands" placeholder="بدون ماركة" clearable x-effect="$el.value = form.brand_id" @pick="form.brand_id = $event.detail.value"></ui-select></div>
-            <div><label class="label">السعر (ج.م)</label><input type="number" class="input" min="0" step="0.01" inputmode="decimal" x-model.number="form.price"></div>
+            <div><label class="label">السعر (ج.م)</label><input type="number" class="input" min="0" step="0.01" inputmode="decimal" x-model.number="form.price" :disabled="form.id && !canPrice" :title="form.id && !canPrice ? 'ملكش صلاحية تغيير السعر' : ''"></div>
             <div><label class="label">الحد الأدنى للتنبيه</label><input type="number" class="input" min="0" step="any" inputmode="decimal" x-model.number="form.min_quantity"></div>
           </div>
 
           <!-- الكمية الابتدائية (عند الإضافة بس) -->
-          <div x-show="!form.id" class="rounded-xl border border-line bg-soft/60 p-4">
+          <div x-show="!form.id && canAdjust" class="rounded-xl border border-line bg-soft/60 p-4">
             <div class="mb-3 flex items-center justify-between">
               <div><h3 class="text-sm font-bold">الكمية الحالية وأماكن التخزين</h3><p class="text-xs text-muted">أي كمية لازم يتحدد لها مكان. سيبها فاضية لو هتدخّل البضاعة من فاتورة وارد.</p></div>
               <button type="button" class="btn btn-outline btn-sm" @click="addRow(form.rows)"><i class="fa-solid fa-plus"></i>مكان</button>
@@ -203,8 +204,8 @@
         </div>
         <div class="flex border-b border-line px-3">
           <button type="button" class="tab" :class="detail.tab === 'locations' && 'tab-on'" @click="detail.tab = 'locations'">الأماكن</button>
-          <button type="button" class="tab" :class="detail.tab === 'in' && 'tab-on'" @click="loadMovements('in', 1)">الوارد</button>
-          <button type="button" class="tab" :class="detail.tab === 'out' && 'tab-on'" @click="loadMovements('out', 1)">الصادر</button>
+          <button type="button" class="tab" x-show="canMovements" :class="detail.tab === 'in' && 'tab-on'" @click="loadMovements('in', 1)">الوارد</button>
+          <button type="button" class="tab" x-show="canMovements" :class="detail.tab === 'out' && 'tab-on'" @click="loadMovements('out', 1)">الصادر</button>
         </div>
         <div class="modal-body">
           <div x-show="detail.tab === 'locations'">

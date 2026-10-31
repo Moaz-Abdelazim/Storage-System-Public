@@ -2,12 +2,12 @@
 //  lookup.js — البحث عن موقع: تقرير المخزون حسب المخزن/الموقع مع drill-down.
 // =====================================================================
 import { api, qs } from "./api.js";
-import { isAdmin } from "./auth.js";
+import { can } from "./auth.js";
 import { num, money, errMsg, getQuery, setQuery, downloadCsv, toast } from "./utils.js";
 
 document.addEventListener("alpine:init", () => {
   window.Alpine.data("lookup", () => ({
-    admin: isAdmin(), num, money,
+    admin: can("finance.view"), num, money,
     scope: { warehouse_id: null, location_id: null, code: "" },
     code: "", codeError: "", resolving: false,
     data: null, loading: true, error: "", search: "", page: 1, pages: 1, total: 0, size: 10,

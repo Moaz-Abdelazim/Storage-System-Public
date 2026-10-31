@@ -2,12 +2,13 @@
 //  invoice.js — تفاصيل فاتورة وارد/صادر (قابلة للطباعة).
 // =====================================================================
 import { api } from "./api.js";
+import { can } from "./auth.js";
 import { num, money, fmtDateTime, errMsg, KIND, getQuery, toast, confirmAction } from "./utils.js";
 import { invalidateData } from "./data.js";
 
 document.addEventListener("alpine:init", () => {
   window.Alpine.data("invoice", () => ({
-    num, money, fmtDateTime,
+    num, money, fmtDateTime, canHeld: can("stock_out.manage_held"), canPrint: can("invoices.print"),
     kind: getQuery("kind") === "out" ? "out" : "in", id: Number(getQuery("id")) || 0,
     inv: null, loading: true, error: "", busy: false,
 

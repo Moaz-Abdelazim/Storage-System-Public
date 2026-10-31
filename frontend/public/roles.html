@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>الأدوار والصلاحيات | مخزني</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="js/theme-init.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+</head>
+<body>
+<noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
+
+<div id="shell" data-admin-only data-active="roles" data-title="الأدوار والصلاحيات">
+  <div x-data="roles" class="space-y-5">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div><h1 class="text-2xl font-bold">الأدوار والصلاحيات</h1><p class="mt-1 text-sm text-muted">اعمل أدوار بصلاحيات محددة وعيّنها للمستخدمين. التغيير بيسري فورًا.</p></div>
+      <button type="button" class="btn btn-primary" @click="openForm()"><i class="fa-solid fa-plus"></i>دور جديد</button>
+    </div>
+
+    <section class="card">
+      <div class="overflow-x-auto p-3">
+        <table class="tbl">
+          <thead><tr><th>الدور</th><th>المستخدمين</th><th>الصلاحيات</th><th>الحالة</th><th class="w-1"></th></tr></thead>
+          <tbody>
+            <template x-if="loading && !rows.length"><template x-for="i in 4"><tr><td colspan="5"><div class="skeleton h-9"></div></td></tr></template></template>
+            <template x-for="r in rows" :key="r.id">
+              <tr>
+                <td><div class="font-medium" x-text="r.name"></div><div class="max-w-[320px] truncate text-xs text-muted" x-show="r.description" x-text="r.description"></div></td>
+                <td class="tabular-nums" x-text="r.users_count"></td>
+                <td><span class="badge" :class="r.is_system ? 'bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'badge-mute'" x-text="r.is_system ? 'كل الصلاحيات' : r.permissions.length + ' صلاحية'"></span></td>
+                <td><span class="badge" :class="r.is_active ? 'badge-ok' : 'badge-bad'" x-text="r.is_active ? 'فعّال' : 'موقوف'"></span></td>
+                <td><div class="flex items-center gap-0.5" x-show="!r.is_system">
+                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تعديل" @click="openForm(r)"><i class="fa-solid fa-pen"></i></button>
+                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" :title="r.is_active ? 'إيقاف' : 'تفعيل'" @click="toggleActive(r)"><i class="fa-solid" :class="r.is_active ? 'fa-toggle-on text-brand-500' : 'fa-toggle-off'"></i></button>
+                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8 text-red-500" title="حذف" @click="remove(r)"><i class="fa-solid fa-trash-can"></i></button>
+                </div><span class="text-xs text-muted" x-show="r.is_system"><i class="fa-solid fa-lock"></i> أساسي</span></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <div class="empty" x-show="!loading && !rows.length && !error" x-cloak>مفيش أدوار</div>
+        <div class="empty" x-show="error" x-cloak><p class="mb-3 text-red-500" x-text="error"></p><button type="button" class="btn btn-outline btn-sm" @click="load()">إعادة المحاولة</button></div>
+      </div>
+    </section>
+
+    <div x-show="form.open" x-cloak x-transition.opacity class="modal" role="dialog" aria-modal="true" @keydown.escape.window="form.open = false">
+      <div class="modal-backdrop" @click="form.open = false"></div>
+      <form class="modal-panel max-w-2xl" @submit.prevent="save()" novalidate autocomplete="off">
+        <div class="modal-head"><h2 class="text-lg font-bold" x-text="form.id ? 'تعديل الدور' : 'دور جديد'"></h2><button type="button" class="btn btn-ghost btn-icon btn-sm" @click="form.open = false" aria-label="إغلاق"><i class="fa-solid fa-xmark"></i></button></div>
+        <div class="modal-body space-y-4">
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div><label class="label">اسم الدور *</label><input type="text" class="input" x-model.trim="form.name" maxlength="50"></div>
+            <div><label class="label">وصف (اختياري)</label><input type="text" class="input" x-model.trim="form.description" maxlength="255"></div>
+          </div>
+          <div class="space-y-3">
+            <template x-for="g in groups" :key="g.group">
+              <div class="rounded-xl border border-line p-3">
+                <div class="mb-2 flex items-center justify-between"><b class="text-sm" x-text="g.group"></b>
+                  <button type="button" class="text-xs text-brand-600 hover:underline" @click="toggleGroup(g)" x-text="groupAll(g) ? 'إلغاء الكل' : 'تحديد الكل'"></button></div>
+                <div class="grid gap-1.5 sm:grid-cols-2">
+                  <template x-for="p in g.permissions" :key="p.key">
+                    <label class="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-soft">
+                      <input type="checkbox" class="mt-1" :checked="form.perms.has(p.key)" @change="toggle(p.key, $event.target.checked)">
+                      <span><span x-text="p.label"></span><span class="block text-[11px] text-muted" x-show="p.requires.length" x-text="'يتطلب: ' + p.requires.map(labelOf).join('، ')"></span></span>
+                    </label>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+          <p class="text-xs text-muted">اختيار صلاحية بيحدد تلقائيًا الصلاحيات اللي بتتطلبها، وإلغاء صلاحية بيلغي اللي معتمدة عليها.</p>
+          <p class="field-err" x-show="form.error" x-text="form.error"></p>
+        </div>
+        <div class="modal-foot"><button type="button" class="btn btn-outline" @click="form.open = false">إلغاء</button><button type="submit" class="btn btn-primary" :disabled="form.saving"><i class="fa-solid fa-spinner animate-spin" x-show="form.saving"></i>حفظ</button></div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/layout.js"></script>
+<script type="module" src="js/roles.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
+</body>
+</html>

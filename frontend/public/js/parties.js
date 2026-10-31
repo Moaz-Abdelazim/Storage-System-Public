@@ -2,7 +2,7 @@
 //  parties.js — الموردين وجهات الاستلام (نفس الصفحة بإعدادات مختلفة).
 // =====================================================================
 import { api, qs } from "./api.js";
-import { isAdmin } from "./auth.js";
+import { can } from "./auth.js";
 import { invalidateData } from "./data.js";
 import { num, fmtDateTime, money, toast, errMsg, confirmAction } from "./utils.js";
 
@@ -10,7 +10,7 @@ export function registerParties(name, cfg) {
   // cfg: { base, productsPath, invoicesPath, noun, deleteHint }
   document.addEventListener("alpine:init", () => {
     window.Alpine.data(name, () => ({
-      admin: isAdmin(), num, money, fmtDateTime,
+      canManage: can(cfg.managePerm), canDelete: can(cfg.deletePerm), num, money, fmtDateTime,
       rows: [], loading: true, error: "", search: "",
       page: 1, pages: 1, total: 0, size: 10, totalInvoices: 0,
       form: { open: false, id: null, name: "", phone: "", address: "", notes: "", saving: false, error: "" },

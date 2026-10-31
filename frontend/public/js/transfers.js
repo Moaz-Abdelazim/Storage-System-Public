@@ -2,17 +2,36 @@
 //  transfers.js — النقل بين المواقع + قايمة الرص + سجل النقل.
 // =====================================================================
 import { api, qs } from "./api.js";
+import { can } from "./auth.js";
 import { invalidateData } from "./data.js";
 import { num, fmtDateTime, toast, errMsg } from "./utils.js";
 
 document.addEventListener("alpine:init", () => {
   window.Alpine.data("transfers", () => ({
-    num, fmtDateTime,
+    num, fmtDateTime, canCreate: can("transfers.create"), canView: can("transfers.view"),
     product: null, fromOptions: [], from: null, to: null, qty: null, notes: "", saving: false, error: "",
     putaway: { items: [], total: 0, page: 1, total_pages: 1, page_size: 6, unallocated_total: 0 },
     h: { rows: [], page: 1, pages: 1, total: 0, size: 10, loading: true, search: "", date_from: "", date_to: "" },
 
-    init() { this.loadPutaway(); this.loadHistory(); },
+    scanCode: "", scanBusy: false,
+
+    init() { this.loadPutaway(); if (this.canView) this.loadHistory(); this.$nextTick(() => this.$refs.scan && this.$refs.scan.focus()); },
+
+    // مسح باركود (أو SKU) يختار المنتج مباشرة
+    async scan() {
+      const code = this.scanCode.trim();
+      this.scanCode = "";
+      if (!code || this.scanBusy) return;
+      this.scanBusy = true;
+      try {
+        const p = await api.get(`/api/products/by-barcode/${encodeURIComponent(code)}`);
+        const option = { value: p.id, label: p.name, sub: `${p.barcode || p.sku ? (p.barcode || p.sku) + " · " : ""}${num(p.quantity)} ${p.unit || ""}`, data: p };
+        this.$refs.prodSel.setSelected(option);
+        await this.pickProduct(option);
+      } catch (e) { toast(errMsg(e, "الكود ده مش صالح"), "error"); }
+      this.scanBusy = false;
+      this.$nextTick(() => this.$refs.scan && this.$refs.scan.focus());
+    },
 
     async pickProduct(option, preselectLocationId = null) {
       this.from = null; this.qty = null; this.fromOptions = []; this.error = "";

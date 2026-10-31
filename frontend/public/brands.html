@@ -16,11 +16,11 @@
 <body>
 <noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
 
-<div id="shell" data-active="brands" data-title="الماركات">
+<div id="shell" data-perm="products.view" data-active="brands" data-title="الماركات">
   <div x-data="brands" class="space-y-5">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div><h1 class="text-2xl font-bold">الماركات</h1><p class="mt-1 text-sm text-muted">نظّم المنتجات حسب ماركة وتابع الكميات</p></div>
-      <button type="button" class="btn btn-primary" @click="openForm()"><i class="fa-solid fa-plus"></i>إضافة ماركة</button>
+      <button type="button" class="btn btn-primary" x-show="canManage" @click="openForm()"><i class="fa-solid fa-plus"></i>إضافة ماركة</button>
     </div>
 
     <div class="grid gap-4 sm:grid-cols-3">
@@ -44,8 +44,8 @@
                 <td class="tabular-nums" x-text="num(r.total_quantity)"></td>
                 <td class="text-muted" x-text="fmtDate(r.created_at)"></td>
                 <td><div class="flex items-center gap-0.5">
-                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تعديل" @click="openForm(r)"><i class="fa-solid fa-pen"></i></button>
-                  <template x-if="admin"><button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8 text-red-500" title="حذف" @click="remove(r)"><i class="fa-solid fa-trash-can"></i></button></template>
+                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تعديل" x-show="canManage" @click="openForm(r)"><i class="fa-solid fa-pen"></i></button>
+                  <template x-if="canDelete"><button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8 text-red-500" title="حذف" @click="remove(r)"><i class="fa-solid fa-trash-can"></i></button></template>
                 </div></td>
               </tr>
             </template>

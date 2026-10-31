@@ -16,7 +16,7 @@
 <body>
 <noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
 
-<div id="shell" data-active="lookup" data-title="البحث عن موقع">
+<div id="shell" data-perm="locations.view" data-active="lookup" data-title="البحث عن موقع">
   <div x-data="lookup" class="space-y-5">
 
     <div>
@@ -44,7 +44,7 @@
     <div class="grid gap-4 sm:grid-cols-3">
       <div class="card card-pad"><div class="kpi-label">إجمالي الكمية</div><div class="mt-1 text-3xl font-bold tabular-nums" x-text="data ? num(data.totals.quantity) : '—'"></div></div>
       <div class="card card-pad"><div class="kpi-label">عدد الأصناف</div><div class="mt-1 text-3xl font-bold tabular-nums" x-text="data ? num(data.totals.products_count) : '—'"></div></div>
-      <div class="card card-pad" x-show="admin"><div class="kpi-label">قيمة المخزون <span class="badge badge-mute !py-0 text-[10px]"><i class="fa-solid fa-lock"></i> أدمن</span></div><div class="mt-1 text-3xl font-bold tabular-nums" x-text="data && data.totals.value != null ? money(data.totals.value) : '—'"></div></div>
+      <div class="card card-pad" x-show="admin"><div class="kpi-label">قيمة المخزون <span class="badge badge-mute !py-0 text-[10px]"><i class="fa-solid fa-lock"></i> صلاحية مالية</span></div><div class="mt-1 text-3xl font-bold tabular-nums" x-text="data && data.totals.value != null ? money(data.totals.value) : '—'"></div></div>
     </div>
 
     <div class="grid gap-5 xl:grid-cols-12">

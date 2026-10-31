@@ -11,10 +11,11 @@ from datetime import datetime
 from typing import Dict, List, Optional, Set
 
 from fastapi import HTTPException
-from sqlalchemy import or_
+from sqlalchemy import or_, update
 from sqlalchemy.orm import Session
 
 from . import models
+from .query_helpers import contains
 from .display_utils import format_user_display
 
 SEP = "-"  # فاصل المستويات في الكود الكامل - عشان كده الكود الواحد ما ينفعش يحتوي عليه
@@ -196,7 +197,17 @@ def lock_products(db: Session, product_ids) -> dict:
     ids = sorted({int(i) for i in product_ids})
     if not ids:
         return {}
-    rows = db.query(models.Product).filter(models.Product.id.in_(ids)).order_by(models.Product.id).with_for_update().all()
+    db.flush()  # الـ session بدون autoflush: أي تعديل معلّق لازم يتكتب قبل populate_existing وإلا بيتمسح
+    if db.get_bind().dialect.name == "sqlite":
+        # SQLite بتتجاهل FOR UPDATE، فبناخد قفل الكتابة بتاعها بكتابة وهمية على صفوف المنتجات (id = id) قبل أي قراءة،
+        # عشان كل القراءات اللي بعد كده في نفس الـ transaction تشوف آخر قيمة وتتسلسل مع أي كتابة متزامنة.
+        db.execute(update(models.Product).where(models.Product.id.in_(ids)).values(id=models.Product.id))
+    # populate_existing: لو المنتج كان متحمّل قبل كده في الـ session بنحدّث بياناته بآخر قيمة committed (من غيرها
+    # الـ ORM كان هيرجّع القيمة القديمة المتخزنة في الـ identity map حتى بعد الـ FOR UPDATE)
+    rows = (
+        db.query(models.Product).filter(models.Product.id.in_(ids)).order_by(models.Product.id)
+        .populate_existing().with_for_update().all()
+    )
     return {p.id: p for p in rows}
 
 
@@ -281,9 +292,9 @@ def query_transfers(
             models.LocationTransfer.to_location_id.in_(scope_ids),
         ))
     if search:
-        like = f"%{search.strip()}%"
+        # contains() بيعمل escape للـ % و _ (البحث بـ "%" كان بيرجّع كل الصفوف)
         q = q.join(models.Product, models.Product.id == models.LocationTransfer.product_id).filter(
-            or_(models.Product.name.like(like), models.Product.sku.like(like))
+            or_(contains(models.Product.name, search), contains(models.Product.sku, search), contains(models.Product.barcode, search))
         )
     rows = [transfer_to_dict(t, idx) for t in q.order_by(models.LocationTransfer.date.desc(), models.LocationTransfer.id.desc()).all()]
     if party:

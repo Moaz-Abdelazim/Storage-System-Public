@@ -22,7 +22,7 @@ def category_stats(
     page: Optional[int] = None,  # من غير page = القايمة كلها
     page_size: int = 15,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_any_permission("products.view", "catalog.manage")),
 ):
     """مع عدد المنتجات المفعّلة وإجمالي الكمية لكل واحد. مع page: ترقيم وبحث من قاعدة البيانات."""
     M, P = models.Category, models.Product
@@ -47,7 +47,7 @@ def category_stats(
 def create_category(
     payload: schemas.CategoryCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("catalog.manage")),
 ):
     name = payload.name.strip()
     if not name:
@@ -66,7 +66,7 @@ def update_category(
     category_id: int,
     payload: schemas.CategoryUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("catalog.manage")),
 ):
     category = db.query(models.Category).filter(models.Category.id == category_id).first()
     if not category:
@@ -87,7 +87,7 @@ def update_category(
 def delete_category(
     category_id: int,
     db: Session = Depends(get_db),
-    admin: models.User = Depends(auth.require_admin),
+    admin: models.User = Depends(auth.require_permission("catalog.delete")),
 ):
     category = db.query(models.Category).filter(models.Category.id == category_id).first()
     if not category:

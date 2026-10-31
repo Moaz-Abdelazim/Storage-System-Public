@@ -16,20 +16,20 @@
 <body>
 <noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
 
-<div id="shell" data-active="movements" data-title="تفاصيل الفاتورة">
+<div id="shell" data-perm="invoices.view" data-active="movements" data-title="تفاصيل الفاتورة">
   <div x-data="invoice" class="mx-auto max-w-4xl space-y-5">
 
     <div class="no-print flex flex-wrap items-center justify-between gap-3">
       <a href="movements.html" class="btn btn-ghost"><i class="fa-solid fa-arrow-right"></i>رجوع للسجل</a>
       <div class="flex flex-wrap items-center gap-2" x-show="inv" x-cloak>
-        <template x-if="isHeld">
+        <template x-if="isHeld && canHeld">
           <span class="flex flex-wrap items-center gap-2">
             <button type="button" class="btn btn-primary" @click="complete()" :disabled="busy"><i class="fa-solid fa-circle-check"></i>إتمام الفاتورة</button>
             <a :href="'stock-out.html#edit=' + id" class="btn btn-outline"><i class="fa-solid fa-pen"></i>تعديل</a>
             <button type="button" class="btn btn-outline text-red-600" @click="remove()" :disabled="busy"><i class="fa-solid fa-trash-can"></i>مسح</button>
           </span>
         </template>
-        <a :href="'invoice-print.html#kind=' + kind + '&id=' + id" class="btn btn-outline"><i class="fa-solid fa-print"></i>طباعة</a>
+        <a x-show="canPrint" :href="'invoice-print.html#kind=' + kind + '&id=' + id" class="btn btn-outline"><i class="fa-solid fa-print"></i>طباعة</a>
       </div>
     </div>
 
@@ -61,7 +61,7 @@
               <tr><td class="text-muted" x-text="i + 1"></td><td class="font-medium" x-text="it.product_name"></td>
                 <td><loc-code x-show="it.location_code" :code="it.location_code"></loc-code><span x-show="!it.location_code" class="text-muted">—</span></td>
                 <td class="tabular-nums" x-text="num(it.quantity)"></td><td class="tabular-nums" x-text="it.unit_price != null ? money(it.unit_price) : '—'"></td>
-                <td class="text-end font-medium tabular-nums" x-text="money((it.unit_price || 0) * it.quantity)"></td></tr>
+                <td class="text-end font-medium tabular-nums" x-text="it.unit_price != null ? money(it.unit_price * it.quantity) : '—'"></td></tr>
             </template>
           </tbody>
         </table>

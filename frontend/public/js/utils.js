@@ -11,6 +11,7 @@ export function num(n, max = 3) {
 }
 
 export function money(n) {
+  if (n == null) return "—";  // null = المستخدم ملوش صلاحية finance.view (أو القيمة مش موجودة)
   const v = Number(n);
   return `${(Number.isFinite(v) ? v : 0).toLocaleString("en-US", { maximumFractionDigits: 2 })} ج.م`;
 }

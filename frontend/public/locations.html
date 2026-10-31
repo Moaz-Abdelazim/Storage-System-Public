@@ -16,12 +16,12 @@
 <body>
 <noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
 
-<div id="shell" data-active="locations" data-title="إدارة المواقع">
+<div id="shell" data-perm="locations.view" data-active="locations" data-title="إدارة المواقع">
   <div x-data="locations" class="space-y-5">
 
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div><h1 class="text-2xl font-bold">المخازن والمواقع</h1><p class="mt-1 text-sm text-muted">هيكل المخازن: المخزن ← الدور ← الغرفة ← الرف... بعدد مستويات مفتوح</p></div>
-      <button type="button" class="btn btn-primary" @click="openWarehouse()"><i class="fa-solid fa-plus"></i>إضافة مخزن</button>
+      <button type="button" class="btn btn-primary" x-show="canManage" @click="openWarehouse()"><i class="fa-solid fa-plus"></i>إضافة مخزن</button>
     </div>
 
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -107,10 +107,10 @@
               </div>
 
               <div class="mt-4 flex flex-wrap gap-2">
-                <button type="button" class="btn btn-primary btn-sm" @click="openLocation(null, selected)"><i class="fa-solid fa-plus"></i>إضافة موقع فرعي</button>
-                <button type="button" class="btn btn-outline btn-sm" @click="selected.kind === 'warehouse' ? openWarehouse(selected) : openLocation(selected)"><i class="fa-solid fa-pen"></i>تعديل</button>
-                <template x-if="selected.kind === 'location' && selected.is_leaf"><button type="button" class="btn btn-outline btn-sm" @click="setDefault(selected)"><i class="fa-solid fa-inbox"></i><span x-text="selected.is_default_receiving ? 'إلغاء كمكان استلام' : 'تعيين كمكان استلام'"></span></button></template>
-                <template x-if="admin"><button type="button" class="btn btn-outline btn-sm text-red-600" @click="remove(selected)"><i class="fa-solid fa-trash-can"></i>حذف</button></template>
+                <button type="button" class="btn btn-primary btn-sm" x-show="canManage" @click="openLocation(null, selected)"><i class="fa-solid fa-plus"></i>إضافة موقع فرعي</button>
+                <button type="button" class="btn btn-outline btn-sm" x-show="canManage" @click="selected.kind === 'warehouse' ? openWarehouse(selected) : openLocation(selected)"><i class="fa-solid fa-pen"></i>تعديل</button>
+                <template x-if="canManage && selected.kind === 'location' && selected.is_leaf"><button type="button" class="btn btn-outline btn-sm" @click="setDefault(selected)"><i class="fa-solid fa-inbox"></i><span x-text="selected.is_default_receiving ? 'إلغاء كمكان استلام' : 'تعيين كمكان استلام'"></span></button></template>
+                <template x-if="canDelete"><button type="button" class="btn btn-outline btn-sm text-red-600" @click="remove(selected)"><i class="fa-solid fa-trash-can"></i>حذف</button></template>
               </div>
 
               <div class="mb-2 mt-6 flex items-center justify-between gap-2"><h3 class="text-sm font-bold">المنتجات الموجودة هنا</h3>

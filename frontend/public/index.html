@@ -168,7 +168,7 @@
             <h2 class="text-base font-bold">أحدث حركات الوارد والصادر</h2>
             <p class="text-xs text-muted">آخر العمليات اللي اتسجلت على المخزون</p>
           </div>
-          <a href="movements.html" class="inline-flex items-center gap-1.5 text-sm font-medium text-brand-600 hover:underline dark:text-brand-400">عرض الكل<i class="fa-solid fa-arrow-left text-xs"></i></a>
+          <a href="movements.html" x-show="canMovements" class="inline-flex items-center gap-1.5 text-sm font-medium text-brand-600 hover:underline dark:text-brand-400">عرض الكل<i class="fa-solid fa-arrow-left text-xs"></i></a>
         </div>
 
         <div class="px-3 pb-3">
@@ -268,7 +268,7 @@
           </template>
         </ul>
 
-        <a href="products.html#stock=low" x-show="lowTotal > 0" x-cloak class="btn btn-outline mt-5 w-full">عرض كل النواقص</a>
+        <a href="products.html#stock=low" x-show="canProducts && lowTotal > 0" x-cloak class="btn btn-outline mt-5 w-full">عرض كل النواقص</a>
       </section>
     </div>
 

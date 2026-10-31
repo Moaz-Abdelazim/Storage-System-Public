@@ -2,7 +2,7 @@
 بيانات طباعة الفاتورة (وارد/صادر) في ضربة واحدة: بيانات الشركة + الفاتورة + كل الأصناف (حتى 500) + اسم المخزن لكل صنف
 + الإجماليات + مسار الـ QR. الأداء: 3 استعلامات بس (الفاتورة بالـ JOIN، الأصناف بالـ JOIN على المنتجات والمخازن، الشركة).
 
-الصلاحيات: نفس صلاحيات GET /api/stock/in|out/{id} بالظبط (أي مستخدم مسجّل) ومن غير ما نكشف أكتر منها.
+الصلاحيات: invoices.print. أسعار وإجماليات الوارد (أسعار شراء) بتتحجب (null) بدون finance.view.
 """
 import os
 import re
@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 
-from .. import models, auth, invoice_calc
+from .. import models, auth, invoice_calc, permissions
 from ..database import get_db
 from ..display_utils import format_user_display
 
@@ -47,7 +47,7 @@ def invoice_print_data(
     kind: Literal["in", "out"],
     invoice_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("invoices.print")),
 ):
     if kind == "in":
         Inv, Item = models.StockInInvoice, models.StockInItem
@@ -84,6 +84,12 @@ def invoice_print_data(
                 totals["discount"] = {"type": inv.discount_type, "value": inv.discount_value, "amount": inv.discount_amount}
             if inv.tax_type and (inv.tax_amount or 0) > 0:
                 totals["tax"] = {"type": inv.tax_type, "value": inv.tax_value, "amount": inv.tax_amount}
+
+    if kind == "in" and not permissions.has_permission(current_user, "finance.view"):
+        # الوارد = أسعار شراء: من غير finance.view بنرجّع null والواجهة بتطبع "-"
+        for it in items:
+            it["unit_price"], it["line_total"] = None, None
+        totals["subtotal"], totals["grand_total"] = None, None
 
     C = models.CompanySettings
     c = db.query(C.name, C.phone1, C.phone2, C.logo_etag).filter(C.id == 1).first()

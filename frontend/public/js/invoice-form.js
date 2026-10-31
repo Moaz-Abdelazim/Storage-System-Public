@@ -2,11 +2,20 @@
 //  invoice-form.js — شاشة فاتورة وارد/صادر (واجهة تشبه الفاتورة بسطور منتجات).
 //  kind: "in" (مورد + مكان استلام) | "out" (جهة مستلمة + صرف من مكان فيه رصيد).
 // =====================================================================
+import { can } from "./auth.js";
 import { api } from "./api.js";
 import { invalidateData } from "./data.js";
 import { num, money, fmtDateTime, toast, errMsg, getQuery } from "./utils.js";
 
 let lineKey = 0;
+
+// صوت خطأ قصير (اختياري - لو المتصفح منع الصوت مفيش مشكلة)
+function beep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(); o.frequency.value = 220; o.connect(ctx.destination); o.start(); setTimeout(() => { o.stop(); ctx.close(); }, 160);
+  } catch (e) { /* مش حرج */ }
+}
 const round2 = (v) => Math.round((Number(v) + Number.EPSILON) * 100) / 100;
 const blankLine = (loc = null) => ({
   key: ++lineKey, product: null, option: null, quantity: null, unit_price: null,
@@ -25,10 +34,60 @@ export function registerInvoice(name, kind) {
       recent: [], recentLoading: true,
       newParty: { open: false, name: "", phone: "", error: "", saving: false },
       // ---- خاص بالصادر: تعليق الفاتورة + خصم/ضريبة على إجمالي الفاتورة + تعديل فاتورة معلّقة (stock-out.html#edit=ID) ----
-      finalize: "completed", discount: { type: "amount", value: null }, tax: { type: "percent", value: null },
+      canDiscount: can("stock_out.discount"), canFinance: can("finance.view"), finalize: "completed", discount: { type: "amount", value: null }, tax: { type: "percent", value: null },
       editId: isIn ? 0 : Number(getQuery("edit")) || 0, editLoading: false, editError: "",
 
-      init() { this.loadRecent(); if (this.editId) this.loadForEdit(); },
+      scanCode: "", scanBusy: false,
+
+      init() { this.loadRecent(); if (this.editId) this.loadForEdit(); this.focusScan(); },
+
+      focusScan() { this.$nextTick(() => this.$refs.scan && this.$refs.scan.focus()); },
+
+      // ---------- مسح الباركود (قارئ عادي = كيبورد بيكتب الكود + Enter/Tab) ----------
+      async scan() {
+        const code = this.scanCode.trim();
+        this.scanCode = "";  // بيفضى بعد كل محاولة
+        if (!code || this.scanBusy) { this.focusScan(); return; }
+        this.scanBusy = true;
+        try {
+          const p = await api.get(`/api/products/by-barcode/${encodeURIComponent(code)}`);
+          this.addScanned(p);
+        } catch (e) {
+          toast(errMsg(e, "الكود ده مش صالح"), "error"); beep();
+        }
+        this.scanBusy = false;
+        this.focusScan();
+      },
+
+      addScanned(p) {
+        const option = { value: p.id, label: p.name, sub: `${p.barcode || p.sku ? (p.barcode || p.sku) + " · " : ""}${num(p.quantity)} ${p.unit || ""}`, data: p };
+        const locOptions = (p.locations || []).map((x) => ({ value: x.location_id, label: x.full_code, sub: `المتاح ${num(x.quantity)} ${p.unit || ""}`, data: x }));
+        const single = !isIn && locOptions.length === 1 ? locOptions[0] : null;
+        // دمج: نفس المنتج (والوارد: أي مكان، الصادر: نفس المكان لو اتحدد) ← زوّد الكمية بواحد
+        const same = this.lines.find((l) => l.product && l.product.id === p.id && (isIn || !single || l.location === single.value));
+        if (same) {
+          same.quantity = (Number(same.quantity) || 0) + 1;
+          if (!isIn && same.locData && same.quantity > same.locData.quantity) { same.over = true; toast(`الكمية أكبر من المتاح (${num(same.locData.quantity)}) في ${same.locData.full_code}`, "error"); beep(); }
+          else same.over = false;
+          return;
+        }
+        let line = this.lines.length === 1 && !this.lines[0].product ? this.lines[0] : null;  // السطر الفاضي الوحيد بيتستخدم
+        if (!line) { this.addLine(); line = this.lines[this.lines.length - 1]; }
+        line.option = option; line.product = p; line.quantity = 1; line.over = false;
+        if (!isIn) {
+          line.unit_price = p.price || 0;
+          line.locOptions = locOptions;
+          if (single) { line.location = single.value; line.locData = single.data; }
+          else if (locOptions.length > 1) {
+            line.location = null; line.locData = null;
+            toast("المنتج في أكتر من مكان - اختار مكان الصرف", "info");
+            this.$nextTick(() => {
+              const sel = document.querySelector(`[data-line="${line.key}"] [data-loc] button`);
+              if (sel) sel.focus();
+            });
+          } else { toast("المنتج مفيش منه رصيد في أي مكان", "error"); beep(); }
+        }
+      },
 
       // ---------- السطور ----------
       get filledLines() { return this.lines.filter((l) => l.product && Number(l.quantity) > 0); },

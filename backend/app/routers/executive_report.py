@@ -22,7 +22,7 @@ from ..database import get_db
 from ..timezone_utils import now_cairo
 from .analytics import _abc_legacy, _abc_sql, _dead_base, _dead_summary, _f, _in_price, _out_price, _supports_window
 
-router = APIRouter(prefix="/api/analytics", tags=["Executive Report (Admin)"], dependencies=[Depends(auth.require_admin)])
+router = APIRouter(prefix="/api/analytics", tags=["Executive Report"], dependencies=[Depends(auth.require_permission("reports.view", "finance.view"))])
 
 P = models.Product
 InInv, InItem = models.StockInInvoice, models.StockInItem

@@ -23,7 +23,7 @@ const EPS_PX = 6; // هامش أمان صغير عشان فروق التقريب
 const $ = (s) => document.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmtQty = (n) => Number(n).toLocaleString("en-US", { maximumFractionDigits: 3 });
-const fmtMoney = (n) => Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtMoney = (n) => n == null ? "-" : Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const cur = (n) => `<span class="num">${fmtMoney(n)}</span> ج.م`;
 // "2026-10-12T14:30:05" -> "12/10/2026 14:30" (توقيت القاهرة زي ما متسجّل - من غير أي تحويل منطقة زمنية)
 const fmtDate = (iso) => {
@@ -201,7 +201,7 @@ async function waitLogo() {
 }
 
 async function main() {
-  if (!guard()) return;
+  if (!guard({ perm: ["invoices.print"] })) return;
   $("#backLink").href = id ? `invoice.html#kind=${kind}&id=${id}` : "movements.html";
   if (!id) return showState("الرابط مش فيه رقم فاتورة.", true);
 

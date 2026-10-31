@@ -16,7 +16,7 @@
 <body>
 <noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
 
-<div id="shell" data-active="transfers" data-title="النقل بين المواقع">
+<div id="shell" data-perm="transfers.view,transfers.create" data-active="transfers" data-title="النقل بين المواقع">
   <div x-data="transfers" class="space-y-5">
 
     <div>
@@ -26,13 +26,16 @@
 
     <div class="grid gap-5 xl:grid-cols-12">
       <!-- نموذج النقل -->
-      <section class="card xl:col-span-5">
+      <section class="card xl:col-span-5" x-show="canCreate" x-cloak>
         <div class="flex items-center gap-3 border-b border-line p-5">
           <span class="grid h-10 w-10 place-items-center rounded-xl bg-blue-500/10 text-blue-600"><i class="fa-solid fa-right-left"></i></span>
           <h2 class="text-base font-bold">نقل جديد</h2>
         </div>
         <form class="space-y-4 p-5" @submit.prevent="submit()" novalidate>
-          <div><label class="label">المنتج *</label>
+          <div class="mb-3"><label class="label" for="scan"><i class="fa-solid fa-barcode me-1 text-brand-500"></i>امسح الباركود</label>
+              <input id="scan" x-ref="scan" type="text" class="input" dir="ltr" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="باركود أو SKU ثم Enter" x-model="scanCode" :disabled="scanBusy"
+                @keydown.enter.prevent="scan()" @keydown.tab="if (scanCode.trim()) { $event.preventDefault(); scan(); }"></div>
+            <div><label class="label">المنتج *</label>
             <ui-select x-ref="prodSel" source="products" placeholder="ابحث عن منتج بالاسم أو الـ SKU" @pick="pickProduct($event.detail.option)"></ui-select></div>
 
           <div x-show="product" x-cloak class="flex items-center justify-between rounded-xl bg-soft px-4 py-3 text-sm">
@@ -84,7 +87,7 @@
           </div>
         </section>
 
-        <section class="card">
+        <section class="card" x-show="canView" x-cloak>
           <div class="flex flex-wrap items-center gap-2 border-b border-line p-4">
             <h2 class="me-auto text-base font-bold">سجل النقل</h2>
             <div class="relative"><i class="fa-solid fa-magnifying-glass pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-xs text-muted"></i>

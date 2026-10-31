@@ -22,7 +22,7 @@ def brand_stats(
     page: Optional[int] = None,  # من غير page = القايمة كلها
     page_size: int = 15,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_any_permission("products.view", "catalog.manage")),
 ):
     """مع عدد المنتجات المفعّلة وإجمالي الكمية لكل واحد. مع page: ترقيم وبحث من قاعدة البيانات."""
     M, P = models.Brand, models.Product
@@ -47,7 +47,7 @@ def brand_stats(
 def create_brand(
     payload: schemas.BrandCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("catalog.manage")),
 ):
     name = payload.name.strip()
     if not name:
@@ -66,7 +66,7 @@ def update_brand(
     brand_id: int,
     payload: schemas.BrandUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("catalog.manage")),
 ):
     brand = db.query(models.Brand).filter(models.Brand.id == brand_id).first()
     if not brand:
@@ -87,7 +87,7 @@ def update_brand(
 def delete_brand(
     brand_id: int,
     db: Session = Depends(get_db),
-    admin: models.User = Depends(auth.require_admin),
+    admin: models.User = Depends(auth.require_permission("catalog.delete")),
 ):
     brand = db.query(models.Brand).filter(models.Brand.id == brand_id).first()
     if not brand:

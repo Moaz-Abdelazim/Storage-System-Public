@@ -3,13 +3,17 @@ from ..timezone_utils import now_cairo
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload, joinedload
 from typing import List, Optional
 
-from .. import models, schemas, auth
+from .. import models, schemas, auth, permissions
 from ..database import get_db
 from ..location_utils import LocationIndex, validate_location_rows, lock_products, require_leaf_location
 from ..display_utils import format_user_display
+from ..barcode import barcode_conflict, sku_conflicts_with_barcode
+from ..money import q3
+from ..services import inventory
 from ..query_helpers import clamp_page, clamp_page_size, contains, total_pages, page_args, paged
 
 router = APIRouter(prefix="/api/products", tags=["Products"])
@@ -34,6 +38,7 @@ def _to_out(p: models.Product, idx: Optional[LocationIndex] = None, scope_ids=No
     return schemas.ProductOut(
         id=p.id,
         sku=p.sku,
+        barcode=p.barcode,
         name=p.name,
         category_id=p.category_id,
         category_name=p.category.name if p.category else None,
@@ -78,7 +83,7 @@ def list_products(
     sort: str = "name",
     order: str = "asc",
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_any_permission("products.view", "stock_in.create", "stock_out.create", "transfers.create", "stocktake.manage")),
 ):
     """
     قايمة المنتجات. مع page/page_size الترقيم والترتيب بيحصلوا في قاعدة البيانات
@@ -101,7 +106,7 @@ def list_products(
         )
         query = query.filter(P.id.in_(in_scope))
     if search and search.strip():
-        query = query.filter(contains(P.name, search) | contains(P.sku, search))
+        query = query.filter(contains(P.name, search) | contains(P.sku, search) | contains(P.barcode, search))
     if category_id:
         query = query.filter(P.category_id == category_id)
     if brand_id:
@@ -140,20 +145,57 @@ def lookup_products(
     q: str = "",
     limit: int = 20,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_any_permission("products.view", "stock_in.create", "stock_out.create", "transfers.create", "stocktake.manage")),
 ):
     """بحث سريع وخفيف (للـ autocomplete في الفواتير والنقل): منتجات مفعّلة بس، وأقصى عدد محدود."""
     limit = max(1, min(limit, 50))
     P = models.Product
     query = db.query(P).filter(P.is_active.is_(True))
     if q and q.strip():
-        query = query.filter(contains(P.name, q) | contains(P.sku, q))
-    rows = query.order_by(P.name).limit(limit).all()
+        query = query.filter(contains(P.name, q) | contains(P.sku, q) | contains(P.barcode, q))
+        # لو الـ q = باركود (أو SKU) منتج بالظبط، المنتج ده يطلع أول نتيجة
+        exact = ((func.lower(P.barcode) == q.strip().lower()) | (func.lower(P.sku) == q.strip().lower()))
+        query = query.order_by(exact.desc(), P.name)
+    else:
+        query = query.order_by(P.name)
+    rows = query.limit(limit).all()
     return [
-        {"id": p.id, "sku": p.sku, "name": p.name, "unit": p.unit, "price": p.price, "quantity": p.quantity,
+        {"id": p.id, "sku": p.sku, "barcode": p.barcode, "name": p.name, "unit": p.unit, "price": p.price, "quantity": p.quantity,
          "min_quantity": p.min_quantity}
         for p in rows
     ]
+
+
+def _lookup_item(p: models.Product) -> dict:
+    return {"id": p.id, "sku": p.sku, "barcode": p.barcode, "name": p.name, "unit": p.unit, "price": p.price,
+            "quantity": p.quantity, "min_quantity": p.min_quantity}
+
+
+@router.get("/by-barcode/{code}")
+def product_by_barcode(
+    code: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_any_permission("products.view", "stock_in.create", "stock_out.create", "transfers.create", "stocktake.manage")),
+):
+    """
+    مسح باركود (قارئ الباركود بيكتب الكود + Enter): مطابقة تامة (case-insensitive) على الباركود الأول وبعدين الـ SKU،
+    لمنتج مفعّل فقط. بيرجّع نفس شكل /lookup + locations (عشان الصادر يعرف المتاح في كل مكان).
+    """
+    P = models.Product
+    low = (code or "").strip().lower()
+    if not low or len(low) > 64:
+        raise HTTPException(status_code=404, detail="مفيش منتج بالباركود ده")
+    product = db.query(P).options(selectinload(P.locations)).filter(func.lower(P.barcode) == low).first()
+    if product is None:
+        product = db.query(P).options(selectinload(P.locations)).filter(func.lower(P.sku) == low).first()
+    if product is None:
+        raise HTTPException(status_code=404, detail="مفيش منتج بالباركود ده")
+    if not product.is_active:
+        raise HTTPException(status_code=409, detail="المنتج معطّل")
+    idx = LocationIndex(db)
+    locs = sorted((pl for pl in product.locations if pl.quantity > 0), key=lambda pl: idx.full_code(pl.location_id))
+    return {**_lookup_item(product), "locations": [
+        {"location_id": pl.location_id, "full_code": idx.full_code(pl.location_id), "quantity": pl.quantity} for pl in locs]}
 
 
 @router.get("/{product_id}/movements")
@@ -163,7 +205,7 @@ def product_movements_paged(
     page: int = 1,
     page_size: int = 10,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("invoices.view")),
 ):
     """حركات الوارد أو الصادر لمنتج واحد - بترقيم من قاعدة البيانات (بدل تحميل التاريخ كله)."""
     if kind not in ("in", "out"):
@@ -182,6 +224,7 @@ def product_movements_paged(
         q.options(joinedload(Item.invoice).joinedload(party_rel), joinedload(Item.invoice).joinedload(user_rel))
         .order_by(Inv.date.desc(), Item.id.desc()).offset((pg - 1) * size).limit(size).all()
     )
+    show_prices = kind == "out" or permissions.has_permission(current_user, "finance.view")  # سعر الشراء: finance.view بس
     items = []
     for it in rows:
         inv = it.invoice
@@ -189,7 +232,8 @@ def product_movements_paged(
         user = inv.received_by if kind == "in" else inv.delivered_by
         uname = inv.received_by_username if kind == "in" else inv.delivered_by_username
         items.append({
-            "invoice_id": it.invoice_id, "date": inv.date, "quantity": it.quantity, "unit_price": it.unit_price,
+            "invoice_id": it.invoice_id, "date": inv.date, "quantity": it.quantity,
+            "unit_price": it.unit_price if show_prices else None,
             "party_name": party.name if party else None, "user_name": format_user_display(user, uname),
         })
     return paged(items, total, pg, size, total_quantity=round(float(total_qty), 3), kind=kind)
@@ -199,7 +243,7 @@ def product_movements_paged(
 def get_product(
     product_id: int,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_any_permission("products.view", "stock_in.create", "stock_out.create", "transfers.create", "stocktake.manage")),
 ):
     product = db.query(models.Product).options(selectinload(models.Product.locations)).filter(models.Product.id == product_id).first()
     if not product:
@@ -211,11 +255,20 @@ def get_product(
 def create_product(
     payload: schemas.ProductCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("products.create")),
 ):
+    # إنشاء منتج بكمية/توزيع ابتدائي = تعديل مخزون: لازم products.adjust كمان
+    if ((payload.quantity or 0) > 0 or payload.locations) and not permissions.has_permission(current_user, "products.adjust"):
+        raise HTTPException(status_code=403, detail=f"ملكش صلاحية: {permissions.label_of('products.adjust')} (إضافة منتج بكمية)")
     sku = payload.sku.strip() if payload.sku else None
-    if sku and db.query(models.Product).filter(models.Product.sku == sku).first():
+    if sku and db.query(models.Product).filter(func.lower(models.Product.sku) == sku.lower()).first():
         raise HTTPException(status_code=400, detail="كود المنتج (SKU) موجود بالفعل")
+    if sku and sku_conflicts_with_barcode(db, sku):
+        raise HTTPException(status_code=400, detail="الـ SKU ده مستخدم كباركود لمنتج تاني")
+    if payload.barcode:
+        msg = barcode_conflict(db, payload.barcode)
+        if msg:
+            raise HTTPException(status_code=400, detail=msg)
     if payload.category_id and not db.query(models.Category).filter(models.Category.id == payload.category_id).first():
         raise HTTPException(status_code=400, detail="التصنيف المختار مش موجود")
     if payload.brand_id and not db.query(models.Brand).filter(models.Brand.id == payload.brand_id).first():
@@ -226,13 +279,17 @@ def create_product(
         raise HTTPException(status_code=400, detail="أي كمية لازم يتحدد لها مكان تخزين. أضف مكان التخزين (أو سيب الكمية صفر وتدخل البضاعة من فاتورة وارد).")
     data = payload.model_dump(exclude={"locations"})
     data["sku"] = sku
-    # الكمية الإجمالية = مجموع كميات الأماكن دايمًا (مفيش بضاعة من غير مكان)
-    data["quantity"] = _round_qty(sum(q for _, q in loc_rows))
+    # الكمية الإجمالية = مجموع كميات الأماكن دايمًا (مفيش بضاعة من غير مكان): بنبدأ بصفر والـ service بيزوّدها
+    data["quantity"] = 0.0
     product = models.Product(**data)
     db.add(product)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:  # سباق: نفس الباركود/الـ SKU اتسجّل في نفس اللحظة
+        db.rollback()
+        raise HTTPException(status_code=400, detail="الباركود أو الـ SKU ده مستخدم في منتج تاني")
     for loc_id, qty in loc_rows:
-        db.add(models.ProductLocation(product_id=product.id, location_id=loc_id, quantity=qty))
+        inventory.add_stock(db, product.id, loc_id, qty)
     db.commit()
     db.refresh(product)
     return _to_out(product, idx)
@@ -243,7 +300,7 @@ def update_product(
     product_id: int,
     payload: schemas.ProductUpdate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("products.edit")),
 ):
     product = db.query(models.Product).filter(models.Product.id == product_id).first()
     if not product:
@@ -253,9 +310,23 @@ def update_product(
         raise HTTPException(status_code=400, detail="التصنيف المختار مش موجود")
     if "brand_id" in data and data["brand_id"] and not db.query(models.Brand).filter(models.Brand.id == data["brand_id"]).first():
         raise HTTPException(status_code=400, detail="الماركة المختارة مش موجودة")
+    if data.get("barcode"):
+        msg = barcode_conflict(db, data["barcode"], exclude_product_id=product.id)
+        if msg:
+            raise HTTPException(status_code=400, detail=msg)
+    # تغيير السعر فعلاً (مقارنة بالقيمة الحالية) محتاج products.price؛ إعادة إرسال نفس السعر مش بتعتبر تغيير
+    if data.get("price") is not None and round(float(data["price"]), 2) != round(float(product.price or 0), 2):
+        if not permissions.has_permission(current_user, "products.price"):
+            raise HTTPException(status_code=403, detail=f"ملكش صلاحية: {permissions.label_of('products.price')}")
     for field, value in data.items():
+        if value is None and field in ("name", "price", "min_quantity"):
+            continue  # أعمدة NOT NULL: null من العميل بيتتجاهل بدل ما يطلع 500
         setattr(product, field, value)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="الباركود ده مستخدم في منتج تاني")
     db.refresh(product)
     return _to_out(product, LocationIndex(db))
 
@@ -265,7 +336,7 @@ def set_product_locations(
     product_id: int,
     payload: schemas.ProductLocationsSet,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("products.adjust")),
 ):
     """
     بيضبط توزيع كمية المنتج على أماكن التخزين (بيستبدل القايمة كلها)، وإجمالي المنتج = مجموع الأماكن دايمًا.
@@ -278,28 +349,19 @@ def set_product_locations(
     idx = LocationIndex(db)
     wanted = dict(validate_location_rows(idx, payload.locations))
 
-    existing = {pl.location_id: pl for pl in product.locations}
-    new_total = _round_qty(sum(wanted.values()))
+    def _tx():
+        lock_products(db, [product_id])
+        old_total, new_total = inventory.replace_locations(db, product_id, {lid: q3(q) for lid, q in wanted.items()})
+        if new_total != old_total:
+            db.add(models.QuantityAdjustment(
+                product_id=product_id, old_quantity=float(old_total), new_quantity=float(new_total),
+                difference=float(new_total - old_total),
+                changed_by_id=current_user.id, changed_by_username=current_user.username,
+                reason=payload.reason or "تعديل توزيع الكمية على أماكن التخزين", date=now_cairo(),
+            ))
+        db.commit()
 
-    for loc_id, pl in existing.items():
-        if loc_id in wanted:
-            pl.quantity = wanted[loc_id]
-        else:
-            db.delete(pl)
-    for loc_id, qty in wanted.items():
-        if loc_id not in existing:
-            db.add(models.ProductLocation(product_id=product.id, location_id=loc_id, quantity=qty))
-
-    old_total = _round_qty(product.quantity)
-    if new_total != old_total:
-        db.add(models.QuantityAdjustment(
-            product_id=product.id, old_quantity=old_total, new_quantity=new_total,
-            difference=_round_qty(new_total - old_total),
-            changed_by_id=current_user.id, changed_by_username=current_user.username,
-            reason=payload.reason or "تعديل توزيع الكمية على أماكن التخزين", date=now_cairo(),
-        ))
-        product.quantity = new_total
-    db.commit()
+    inventory.with_retry(db, _tx)
     db.refresh(product)
     return _to_out(product, idx)
 
@@ -309,7 +371,7 @@ def adjust_quantity(
     product_id: int,
     payload: schemas.QuantityAdjustmentCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_permission("products.adjust")),
 ):
     """
     تصحيح كمية منتج في مكان معيّن (تصحيح جرد) - بيتسجل في سجل منفصل (quantity_adjustments)
@@ -320,30 +382,22 @@ def adjust_quantity(
         raise HTTPException(status_code=404, detail="المنتج مش موجود")
     idx = LocationIndex(db)
     require_leaf_location(idx, payload.location_id)
-    new_at_loc = _round_qty(payload.new_quantity)
 
-    pl = next((x for x in product.locations if x.location_id == payload.location_id), None)
-    old_at_loc = pl.quantity if pl else 0.0
-    old_total = _round_qty(product.quantity)
-    new_total = _round_qty(old_total - old_at_loc + new_at_loc)
+    def _tx():
+        lock_products(db, [product_id])
+        old_total = inventory.product_total(db, product_id)
+        old_at_loc, new_at_loc = inventory.set_location_quantity(db, product_id, payload.location_id, payload.new_quantity)
+        new_total = inventory.product_total(db, product_id)
+        reason = f"[{idx.full_code(payload.location_id)}] " + (payload.reason or "")
+        db.add(models.QuantityAdjustment(
+            product_id=product_id, old_quantity=float(old_total), new_quantity=float(new_total),
+            difference=float(new_total - old_total),
+            changed_by_id=current_user.id, changed_by_username=current_user.username,
+            reason=reason.strip(), date=now_cairo(),
+        ))
+        db.commit()
 
-    if pl is None:
-        if new_at_loc > 0:
-            db.add(models.ProductLocation(product_id=product.id, location_id=payload.location_id, quantity=new_at_loc))
-    elif new_at_loc > 0:
-        pl.quantity = new_at_loc
-    else:
-        db.delete(pl)
-
-    reason = f"[{idx.full_code(payload.location_id)}] " + (payload.reason or "")
-    db.add(models.QuantityAdjustment(
-        product_id=product.id, old_quantity=old_total, new_quantity=new_total,
-        difference=_round_qty(new_total - old_total),
-        changed_by_id=current_user.id, changed_by_username=current_user.username,
-        reason=reason.strip(), date=now_cairo(),
-    ))
-    product.quantity = new_total
-    db.commit()
+    inventory.with_retry(db, _tx)
     db.refresh(product)
     return _to_out(product, idx)
 
@@ -353,7 +407,7 @@ def set_product_active(
     product_id: int,
     payload: schemas.ProductActiveSet,
     db: Session = Depends(get_db),
-    admin: models.User = Depends(auth.require_admin),
+    admin: models.User = Depends(auth.require_permission("products.toggle")),
 ):
     """
     بديل الحذف: تفعيل / تعطيل المنتج (للأدمن). المنتج المعطّل بيختفي من قايمة المنتجات الافتراضية

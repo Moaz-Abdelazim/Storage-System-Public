@@ -108,7 +108,7 @@ def _wh_node(idx: _Index, w, stats: Optional[tuple] = None) -> dict:
 
 
 @router.get("/summary")
-def summary(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def summary(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_any_permission("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage"))):
     """أرقام عامة للكروت (عدد المخازن والمواقع والأماكن النهائية وإجمالي الكمية) بـ SQL مجمّع."""
     L, PL = models.Location, models.ProductLocation
     child = aliased(L)
@@ -121,7 +121,7 @@ def summary(db: Session = Depends(get_db), current_user: models.User = Depends(a
 
 
 @router.get("/roots")
-def roots(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def roots(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_any_permission("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage"))):
     """المخازن (المستوى الأول) بإجمالي الكمية وعدد الأصناف. عدد المخازن صغير عادة."""
     idx = _Index(db)
     whs = sorted(idx.wh.values(), key=lambda w: (_norm(w.code), w.id))
@@ -136,7 +136,7 @@ def children(
     page: int = 1,
     page_size: int = 50,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_any_permission("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage")),
 ):
     """أبناء مخزن (لو parent_id فاضي) أو موقع - بترقيم، والإحصائيات للصفحة دي بس."""
     idx = _Index(db)
@@ -163,7 +163,7 @@ def search(
     warehouse_id: Optional[int] = None,
     limit: int = 30,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
+    current_user: models.User = Depends(auth.require_any_permission("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage")),
 ):
     """بحث في كل المواقع بالاسم أو الكود أو الكود الكامل (حد أقصى للنتايج) - للقوايم المنسدلة."""
     idx = _Index(db)

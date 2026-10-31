@@ -16,7 +16,7 @@
 <body>
 <noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
 
-<div id="shell" data-active="stock-in" data-title="فاتورة وارد">
+<div id="shell" data-perm="stock_in.create" data-active="stock-in" data-title="فاتورة وارد">
   <div x-data="stockIn" class="space-y-5">
 
     <div class="flex flex-wrap items-center justify-between gap-3">
@@ -49,13 +49,20 @@
           <div><label class="label">ملاحظات</label><input type="text" class="input" x-model.trim="notes" maxlength="300" placeholder="ملاحظات على الفاتورة (اختياري)"></div>
         </div>
 
-        <div class="border-t border-line">
+                <div class="flex flex-wrap items-center gap-3 border-t border-line px-5 py-3" x-show="!editLoading">
+          <label class="flex items-center gap-2 text-sm font-medium" for="scan"><i class="fa-solid fa-barcode text-lg text-brand-500"></i>امسح الباركود</label>
+          <input id="scan" x-ref="scan" type="text" class="input max-w-xs" dir="ltr" maxlength="64" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="text"
+            placeholder="باركود أو SKU ثم Enter" x-model="scanCode" :disabled="scanBusy"
+            @keydown.enter.prevent="scan()" @keydown.tab="if (scanCode.trim()) { $event.preventDefault(); scan(); }">
+          <span class="text-xs text-muted">قارئ الباركود بيكتب الكود ويدوس Enter تلقائيًا.</span>
+        </div>
+<div class="border-t border-line">
           <div class="hidden grid-cols-[minmax(0,2.4fr)_minmax(0,1.6fr)_6rem_6.5rem_5.5rem_2.25rem] gap-3 bg-soft/70 px-5 py-2.5 text-xs font-medium text-muted lg:grid">
             <span>المنتج</span><span>مكان التخزين</span><span>الكمية</span><span>سعر الشراء</span><span class="text-end">الإجمالي</span><span></span>
           </div>
           <ul class="divide-y divide-line">
             <template x-for="(l, i) in lines" :key="l.key">
-              <li class="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(0,2.4fr)_minmax(0,1.6fr)_6rem_6.5rem_5.5rem_2.25rem] lg:items-start lg:py-3">
+              <li :data-line="l.key" class="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(0,2.4fr)_minmax(0,1.6fr)_6rem_6.5rem_5.5rem_2.25rem] lg:items-start lg:py-3">
                 <div>
                   <label class="label lg:hidden">المنتج</label>
                   <ui-select source="products" placeholder="ابحث عن منتج..." x-effect="l.option && $el.value !== l.product.id && $el.setSelected(l.option)" @pick="pickProduct(l, $event.detail.option)"></ui-select>
@@ -67,7 +74,7 @@
                   <p class="mt-1 text-xs" :class="l.over ? 'text-red-600' : 'text-muted'" x-show="l.locData && l.locData.quantity != null" x-text="'المتاح: ' + num(l.locData && l.locData.quantity)"></p>
                 </div>
                 <div><label class="label lg:hidden">الكمية</label><input type="number" class="input" :class="l.over && 'border-red-400'" min="0" step="any" inputmode="decimal" x-model.number="l.quantity" placeholder="0"></div>
-                <div><label class="label lg:hidden">سعر الشراء</label><input type="number" class="input" min="0" step="0.01" inputmode="decimal" x-model.number="l.unit_price" placeholder="اختياري" @keydown.enter.prevent="i === lines.length - 1 && addLine()"></div>
+                <div><label class="label lg:hidden">سعر الشراء</label><input type="number" class="input" min="0" step="0.01" inputmode="decimal" x-model.number="l.unit_price" :disabled="!canFinance" :placeholder="canFinance ? '' : '—'" :title="canFinance ? '' : 'ملكش صلاحية الأسعار'" placeholder="اختياري" @keydown.enter.prevent="i === lines.length - 1 && addLine()"></div>
                 <div class="flex items-center justify-between lg:block lg:pt-2.5 lg:text-end"><span class="text-xs text-muted lg:hidden">الإجمالي</span><b class="tabular-nums" x-text="money(lineTotal(l))"></b></div>
                 <div class="flex justify-end"><button type="button" class="btn btn-ghost btn-icon btn-sm !h-9 !w-9 text-red-500" @click="removeLine(i)" aria-label="حذف السطر" :disabled="lines.length === 1"><i class="fa-solid fa-trash-can"></i></button></div>
               </li>

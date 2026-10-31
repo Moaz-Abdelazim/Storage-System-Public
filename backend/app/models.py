@@ -1,11 +1,50 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, DateTime, ForeignKey, Text, Boolean, UniqueConstraint, Numeric, LargeBinary
+    Column, Index, Integer, String, DateTime, ForeignKey, Text, Boolean, UniqueConstraint, CheckConstraint, Numeric, LargeBinary
 )
 from sqlalchemy.dialects.mysql import LONGBLOB
+from sqlalchemy import event
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from .database import Base
 from .timezone_utils import now_cairo
+
+
+# الكميات DECIMAL(14,3) والفلوس DECIMAL(14,2): دقة مضمونة في الـ DB. asdecimal=False = بتتقرا في Python كـ float
+# (شكل الـ API والتقارير ما بيتغيرش)، والكتابة بتعدّي دايمًا على app/money.py (Decimal + ROUND_HALF_UP).
+def Qty():
+    return Numeric(14, 3, asdecimal=False)
+
+
+def Money():
+    return Numeric(14, 2, asdecimal=False)
+
+
+class Role(Base):
+    """
+    دور بيحدده الأدمن (اسم + صلاحيات من الكتالوج في app/permissions.py). الدور is_system ("مدير النظام") عنده
+    كل الصلاحيات ضمنيًا (مش متخزنة في role_permissions) ومينفعش يتعدّل ولا يتعطّل ولا يتمسح.
+    """
+    __tablename__ = "roles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), unique=True, nullable=False)
+    description = Column(String(255), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default="1")
+    is_system = Column(Boolean, nullable=False, default=False, server_default="0")
+    created_at = Column(DateTime, default=now_cairo)
+    updated_at = Column(DateTime, default=now_cairo, onupdate=now_cairo)
+
+    permissions = relationship("RolePermission", back_populates="role", cascade="all, delete-orphan", passive_deletes=True)
+    users = relationship("User", back_populates="role")
+
+
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True)
+    permission = Column(String(64), primary_key=True)
+
+    role = relationship("Role", back_populates="permissions")
 
 
 class User(Base):
@@ -15,11 +54,21 @@ class User(Base):
     username = Column(String(50), unique=True, index=True, nullable=False)
     full_name = Column(String(100), nullable=True)
     password_hash = Column(String(255), nullable=False)
-    role = Column(String(20), default="staff")  # admin / staff
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="RESTRICT"), nullable=False, index=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=now_cairo)
 
+    role = relationship("Role", back_populates="users")
     login_logs = relationship("LoginLog", back_populates="user", foreign_keys="LoginLog.user_id")
+
+    @property
+    def is_admin(self) -> bool:
+        """الأدمن = دور is_system (مفيش أي فحص نصي على اسم الدور في أي مكان)."""
+        return bool(self.role is not None and self.role.is_system)
+
+    @property
+    def role_name(self) -> str:
+        return self.role.name if self.role is not None else ""
 
 
 class LoginLog(Base):
@@ -93,16 +142,21 @@ class Brand(Base):
 
 class Product(Base):
     __tablename__ = "products"
+    __table_args__ = (
+        CheckConstraint("quantity >= 0", name="quantity_nonneg"),
+        UniqueConstraint("barcode", name="uq_products_barcode"),  # الـ unique بيعمل index تلقائي؛ التفرّد case-insensitive بيتفحص في الـ API
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    sku = Column(String(50), unique=True, index=True, nullable=True)  # اختياري
+    sku = Column(String(50), unique=True, index=True, nullable=True)  # اختياري - كود داخلي للشركة
+    barcode = Column(String(64), nullable=True)  # اختياري - الكود المطبوع على الملصق (نص عشان الأصفار في الأول)
     name = Column(String(150), nullable=False)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     brand_id = Column(Integer, ForeignKey("brands.id"), nullable=True)
     unit = Column(String(30), default="قطعة")
-    price = Column(Float, default=0.0)
-    quantity = Column(Float, default=0.0)  # الكمية الحالية بالمخزن
-    min_quantity = Column(Float, default=0.0)  # حد أدنى للتنبيه
+    price = Column(Money(), nullable=False, default=0.0, server_default="0")
+    quantity = Column(Qty(), nullable=False, default=0.0, server_default="0")  # الكمية الحالية بالمخزن (= مجموع الأماكن)
+    min_quantity = Column(Qty(), nullable=False, default=0.0, server_default="0")  # حد أدنى للتنبيه
     # المنتجات ما بتتحذفش - بتتعطّل (is_active=False) فتختفي من القوايم والفواتير الجديدة وسجلها يفضل محفوظ
     is_active = Column(Boolean, nullable=False, default=True, server_default="1", index=True)
     created_at = Column(DateTime, default=now_cairo)
@@ -138,8 +192,8 @@ class StockInItem(Base):
     id = Column(Integer, primary_key=True, index=True)
     invoice_id = Column(Integer, ForeignKey("stock_in_invoices.id"), nullable=False)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
-    quantity = Column(Float, nullable=False)
-    unit_price = Column(Float, nullable=True)
+    quantity = Column(Qty(), nullable=False)
+    unit_price = Column(Money(), nullable=True)
 
     invoice = relationship("StockInInvoice", back_populates="items")
     product = relationship("Product", back_populates="stock_in_items")
@@ -183,8 +237,8 @@ class StockOutItem(Base):
     id = Column(Integer, primary_key=True, index=True)
     invoice_id = Column(Integer, ForeignKey("stock_out_invoices.id"), nullable=False)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
-    quantity = Column(Float, nullable=False)
-    unit_price = Column(Float, nullable=True)
+    quantity = Column(Qty(), nullable=False)
+    unit_price = Column(Money(), nullable=True)
 
     invoice = relationship("StockOutInvoice", back_populates="items")
     product = relationship("Product", back_populates="stock_out_items")
@@ -201,9 +255,9 @@ class QuantityAdjustment(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
-    old_quantity = Column(Float, nullable=False)
-    new_quantity = Column(Float, nullable=False)
-    difference = Column(Float, nullable=False)
+    old_quantity = Column(Qty(), nullable=False)
+    new_quantity = Column(Qty(), nullable=False)
+    difference = Column(Qty(), nullable=False)
     changed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # ممكن يبقى NULL لو الحساب اتمسح
     changed_by_username = Column(String(50), nullable=True)  # نسخة من اسمه وقت التعديل
     reason = Column(Text, nullable=True)
@@ -236,11 +290,14 @@ class Warehouse(Base):
 
 class Location(Base):
     __tablename__ = "locations"
-    __table_args__ = (UniqueConstraint("warehouse_id", "parent_id", "code", name="uq_location_sibling_code"),)
+    # parent_key = COALESCE(parent_id, 0): عمود عادي NOT NULL بيتحدّث تلقائيًا (listener تحت) عشان الـ unique يمنع تكرار الكود
+    # بين الإخوة حتى لما parent_id = NULL (في MySQL/SQLite الـ NULL مش بيتساوى بـ NULL فالـ unique القديم كان بيسمح بالتكرار)
+    __table_args__ = (UniqueConstraint("warehouse_id", "parent_key", "code", name="uq_location_sibling_code"),)
 
     id = Column(Integer, primary_key=True, index=True)
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=False, index=True)
     parent_id = Column(Integer, ForeignKey("locations.id"), nullable=True, index=True)  # NULL = تحت المخزن مباشرة
+    parent_key = Column(Integer, nullable=False, default=0, server_default="0")
     name = Column(String(100), nullable=False)
     code = Column(String(30), nullable=False)  # كود المستوى ده بس (مش الكود الكامل)
     type = Column(String(50), nullable=True)  # اختياري: دور / غرفة / رف ... (وصف فقط، النظام ما بيفترضش معنى له)
@@ -254,12 +311,15 @@ class Location(Base):
 class ProductLocation(Base):
     """كمية المنتج في مكان تخزين معيّن (المنتج الواحد ممكن يبقى في أكتر من مكان)."""
     __tablename__ = "product_locations"
-    __table_args__ = (UniqueConstraint("product_id", "location_id", name="uq_product_location"),)
+    __table_args__ = (
+        UniqueConstraint("product_id", "location_id", name="uq_product_location"),
+        CheckConstraint("quantity >= 0", name="quantity_nonneg"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
     location_id = Column(Integer, ForeignKey("locations.id"), nullable=False, index=True)
-    quantity = Column(Float, nullable=False, default=0.0)
+    quantity = Column(Qty(), nullable=False, default=0.0)
 
     product = relationship("Product", back_populates="locations")
     location = relationship("Location")
@@ -273,7 +333,7 @@ class LocationTransfer(Base):
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
     from_location_id = Column(Integer, ForeignKey("locations.id"), nullable=False)
     to_location_id = Column(Integer, ForeignKey("locations.id"), nullable=False)
-    quantity = Column(Float, nullable=False)
+    quantity = Column(Qty(), nullable=False)
     moved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     moved_by_username = Column(String(50), nullable=True)  # نسخة من الاسم وقت النقل - بتفضل حتى لو الحساب اتمسح
     notes = Column(Text, nullable=True)
@@ -309,3 +369,27 @@ class CompanySettings(Base):
     logo_mime = Column(String(30), nullable=True)
     logo_etag = Column(String(64), nullable=True)  # SHA-1 للمحتوى: بيتستخدم كـ ETag وكرقم نسخة للكاش
     updated_at = Column(DateTime, default=now_cairo, onupdate=now_cairo)
+
+
+# فهارس أداء للتقارير والسجلات (التواريخ وأعمدة الربط بتتفلتر وتتجمّع عليها كتير) - كانت في migrations.py القديم
+_EXTRA_INDEXES = [
+    ("ix_stock_in_invoices_date", StockInInvoice.date),
+    ("ix_stock_out_invoices_date", StockOutInvoice.date),
+    ("ix_stock_in_invoices_supplier", StockInInvoice.supplier_id),
+    ("ix_stock_out_invoices_recipient", StockOutInvoice.recipient_id),
+    ("ix_stock_in_items_invoice", StockInItem.invoice_id),
+    ("ix_stock_in_items_product", StockInItem.product_id),
+    ("ix_stock_out_items_invoice", StockOutItem.invoice_id),
+    ("ix_stock_out_items_product", StockOutItem.product_id),
+    ("ix_quantity_adjustments_date", QuantityAdjustment.date),
+    ("ix_quantity_adjustments_product", QuantityAdjustment.product_id),
+    ("ix_login_logs_login_time", LoginLog.login_time),
+]
+for _name, _col in _EXTRA_INDEXES:
+    Index(_name, _col)
+
+
+@event.listens_for(Location, "before_insert")
+@event.listens_for(Location, "before_update")
+def _sync_location_parent_key(mapper, connection, target):
+    target.parent_key = target.parent_id or 0

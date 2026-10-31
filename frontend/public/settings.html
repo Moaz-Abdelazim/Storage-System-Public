@@ -28,7 +28,7 @@
         <div class="min-w-0 space-y-1.5 text-start">
           <div class="truncate text-lg font-bold" x-text="user.name"></div>
           <div class="truncate text-right text-sm text-muted" dir="ltr" x-text="'@' + user.username"></div>
-          <span class="badge" :class="admin ? 'bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'badge-mute'" x-text="admin ? 'مدير النظام' : 'موظف مخازن'"></span>
+          <span class="badge" :class="user.isAdmin ? 'bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'badge-mute'" x-text="user.role || (user.isAdmin ? 'مدير النظام' : 'مستخدم')"></span>
         </div>
       </div>
       <div class="mt-6 border-t border-line pt-5">
@@ -38,7 +38,7 @@
     </section>
 
     <!-- بيانات الشركة (أدمن بس): بتظهر في الفواتير المطبوعة -->
-    <section class="card card-pad" x-show="admin" x-cloak>
+    <section class="card card-pad" x-show="canCompany" x-cloak>
       <h2 class="mb-1 flex items-center gap-2 text-base font-bold"><i class="fa-solid fa-building text-brand-500"></i>بيانات الشركة</h2>
       <p class="mb-4 text-sm text-muted">الاسم والتليفونات واللوجو بيظهروا في هيدر الفاتورة المطبوعة (اللوجو بيتطبع بألوانه).</p>
       <form class="grid gap-4 sm:grid-cols-3" @submit.prevent="saveCompany()" novalidate>
@@ -82,7 +82,7 @@
       <p class="mb-4 text-sm text-muted">نزّل نسخة من بياناتك بصيغة Excel.</p>
       <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <template x-for="x in exports" :key="x.path">
-          <button type="button" class="flex items-center gap-3 rounded-xl border border-line p-4 text-start transition hover:border-brand-500/50 hover:bg-soft disabled:opacity-60" @click="exportFile(x)" :disabled="busy === x.path" x-show="!x.admin || admin">
+          <button type="button" class="flex items-center gap-3 rounded-xl border border-line p-4 text-start transition hover:border-brand-500/50 hover:bg-soft disabled:opacity-60" @click="exportFile(x)" :disabled="busy === x.path" x-show="canExport(x)">
             <span class="grid h-11 w-11 place-items-center rounded-xl bg-green-600/10 text-green-700 dark:text-green-300"><i class="fa-solid" :class="busy === x.path ? 'fa-spinner animate-spin' : x.icon"></i></span>
             <span><span class="block text-sm font-medium" x-text="x.label"></span><span class="text-xs text-muted" x-text="x.sub"></span></span>
           </button>
@@ -91,7 +91,7 @@
     </section>
 
     <!-- الاستيراد -->
-    <section id="import" class="card card-pad scroll-mt-24">
+    <section id="import" class="card card-pad scroll-mt-24" x-show="canImport" x-cloak>
       <h2 class="mb-1 flex items-center gap-2 text-base font-bold"><i class="fa-solid fa-file-import text-brand-500"></i>استيراد المنتجات من Excel</h2>
       <p class="mb-4 text-sm text-muted">ارفع ملف بصيغة <span dir="ltr">.xlsx</span>. المنتجات الموجودة (بنفس الـ SKU) بتتحدّث والجديدة بتتضاف. <button type="button" class="font-medium text-brand-600 hover:underline" @click="exportFile(exports[1])">نزّل القالب</button></p>
 
@@ -101,7 +101,7 @@
         <i class="fa-solid fa-cloud-arrow-up text-3xl text-brand-500"></i>
         <span class="text-sm font-medium" x-text="file ? file.name : 'اسحب الملف هنا أو اضغط للاختيار'"></span>
         <span class="text-xs text-muted">xlsx — بحد أقصى 10 ميجا</span>
-        <input type="file" class="sr-only" accept=".xlsx,.xls" @change="pick($event.target.files[0]); $event.target.value = ''">
+        <input type="file" class="sr-only" accept=".xlsx" @change="pick($event.target.files[0]); $event.target.value = ''">
       </label>
 
       <div class="mt-4 flex items-center gap-3"><button type="button" class="btn btn-primary" @click="importFile()" :disabled="!file || importing"><i class="fa-solid fa-spinner animate-spin" x-show="importing"></i><i class="fa-solid fa-upload" x-show="!importing"></i>بدء الاستيراد</button>
