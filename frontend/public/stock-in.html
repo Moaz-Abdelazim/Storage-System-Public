@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <meta name="robots" content="noindex, nofollow">
-  <title>فاتورة وارد | مخزني</title>
+  <title>إذن إضافة | مخزني</title>
   <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
   <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -16,28 +16,28 @@
 <body>
 <noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
 
-<div id="shell" data-perm="stock_in.create" data-active="stock-in" data-title="فاتورة وارد">
+<div id="shell" data-perm="stock_in.create" data-active="stock-in" data-title="إذن إضافة">
   <div x-data="stockIn" class="space-y-5">
 
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div class="flex items-center gap-3">
         <span class="grid h-12 w-12 place-items-center rounded-2xl text-xl bg-brand-500/10 text-brand-600 dark:text-brand-300"><i class="fa-solid fa-arrow-down"></i></span>
-        <div><h1 class="text-2xl font-bold">فاتورة وارد</h1><p class="mt-0.5 text-sm text-muted">استلام بضاعة من مورد وتخزينها في مكانها</p></div>
+        <div><h1 class="text-2xl font-bold">إذن إضافة (وارد)</h1><p class="mt-0.5 text-sm text-muted">استلام بضاعة من مورد وتخزينها في مكانها (مستند مخزني غير ضريبي)</p></div>
       </div>
-      <a href="movements.html#kind=in" class="btn btn-outline"><i class="fa-solid fa-clock-rotate-left"></i>كل الفواتير</a>
+      <a href="movements.html#kind=in" class="btn btn-outline"><i class="fa-solid fa-clock-rotate-left"></i>كل المستندات</a>
     </div>
 
     <!-- نجاح -->
     <div x-show="done" x-cloak x-transition class="flex flex-wrap items-center gap-3 rounded-2xl border border-brand-200 bg-brand-50 p-4 text-sm text-brand-900 dark:border-brand-500/30 dark:bg-brand-950/50 dark:text-brand-100">
       <i class="fa-solid fa-circle-check text-xl text-brand-500"></i>
-      <span class="flex-1">تم تسجيل الفاتورة <b x-text="'#' + (done && done.id)"></b> بنجاح.</span>
-      <a :href="'invoice.html#kind=in&id=' + (done && done.id)" class="btn btn-outline btn-sm">عرض الفاتورة</a>
+      <span class="flex-1">تم تسجيل إذن الإضافة <b x-text="'#' + (done && done.id)"></b> بنجاح.</span>
+      <a :href="'invoice.html#kind=in&id=' + (done && done.id)" class="btn btn-outline btn-sm">عرض المستند</a>
       <a :href="'invoice-print.html#kind=in&id=' + (done && done.id)" class="btn btn-outline btn-sm"><i class="fa-solid fa-print"></i>طباعة</a>
       <button type="button" class="btn btn-ghost btn-sm" @click="done = null"><i class="fa-solid fa-xmark"></i></button>
     </div>
 
     <div class="grid gap-5 xl:grid-cols-12">
-      <!-- الفاتورة -->
+      <!-- المستند -->
       <form class="card xl:col-span-8" @submit.prevent="submit()" novalidate>
         <div class="h-1.5 rounded-t-2xl bg-brand-500"></div>
         <div class="grid gap-4 p-5 sm:grid-cols-2">
@@ -46,7 +46,7 @@
               <button type="button" class="text-xs font-medium text-brand-600 hover:underline" @click="newParty.open = true; newParty.name = ''; newParty.phone = ''; newParty.error = ''"><i class="fa-solid fa-plus"></i> جديد</button></div>
             <ui-select x-ref="partySel" source="suppliers" placeholder="اختار المورد (اختياري)" clearable @pick="partyId = $event.detail.value"></ui-select>
           </div>
-          <div><label class="label">ملاحظات</label><input type="text" class="input" x-model.trim="notes" maxlength="300" placeholder="ملاحظات على الفاتورة (اختياري)"></div>
+          <div><label class="label">ملاحظات</label><input type="text" class="input" x-model.trim="notes" maxlength="300" placeholder="ملاحظات على المستند (اختياري)"></div>
         </div>
 
                 <div class="flex flex-wrap items-center gap-3 border-t border-line px-5 py-3" x-show="!editLoading">
@@ -97,21 +97,21 @@
         <p class="field-err px-5 pb-4" x-show="error" x-text="error"></p>
       </form>
 
-      <!-- آخر الفواتير -->
+      <!-- آخر المستندات -->
       <aside class="xl:col-span-4">
         <section class="card">
-          <div class="flex items-center justify-between border-b border-line p-5"><h2 class="text-base font-bold">آخر الفواتير</h2><a href="movements.html#kind=in" class="text-xs font-medium text-brand-600 hover:underline">عرض الكل</a></div>
+          <div class="flex items-center justify-between border-b border-line p-5"><h2 class="text-base font-bold">آخر المستندات</h2><a href="movements.html#kind=in" class="text-xs font-medium text-brand-600 hover:underline">عرض الكل</a></div>
           <ul class="divide-y divide-line">
             <template x-if="recentLoading"><template x-for="i in 4"><li class="p-4"><div class="skeleton h-10"></div></li></template></template>
-            <template x-for="r in recent" :key="r.invoice_id">
-              <li><a :href="'invoice.html#kind=in&id=' + r.invoice_id" class="flex items-center gap-3 px-5 py-3 transition hover:bg-soft">
+            <template x-for="r in recent" :key="r.id">
+              <li><a :href="'invoice.html#kind=in&id=' + r.id" class="flex items-center gap-3 px-5 py-3 transition hover:bg-soft">
                 <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-sm bg-brand-500/10 text-brand-600 dark:text-brand-300"><i class="fa-solid fa-arrow-down"></i></span>
-                <span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium" x-text="'فاتورة #' + r.invoice_id + ' · ' + (r.party_name || 'بدون جهة')"></span>
-                  <span class="block text-xs text-muted" x-text="fmtDateTime(r.date) + ' · ' + r.items_total + ' صنف'"></span></span>
+                <span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium" x-text="'#' + r.id + ' · ' + (r.supplier_name || 'بدون جهة')" :title="'#' + r.id + ' · ' + (r.supplier_name || 'بدون جهة')"></span>
+                  <span class="block text-xs text-muted"><span x-text="fmtDateTime(r.date) + ' · ' + r.items_total + ' صنف'"></span> <span class="badge" :class="docStatus(r.status).cls" x-text="docStatus(r.status).label"></span></span></span>
                 <b class="text-sm tabular-nums" x-text="money(r.total_value)"></b></a></li>
             </template>
           </ul>
-          <p class="empty" x-show="!recentLoading && !recent.length">مفيش فواتير لسه.</p>
+          <p class="empty" x-show="!recentLoading && !recent.length">مفيش مستندات لسه.</p>
         </section>
       </aside>
     </div>

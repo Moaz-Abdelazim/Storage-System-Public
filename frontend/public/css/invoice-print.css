@@ -99,3 +99,13 @@ table.items td.tot{font-weight:700}
   .sheet:last-child{break-after:auto;page-break-after:auto}
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
+
+/* ---- عبارات الحالة (عرض سعر / حجز / ملغاة): واضحة حتى في الطباعة بالأبيض والأسود ---- */
+.banner{margin:-1mm 0 4mm;padding:2.2mm 3.5mm;border:1.2px solid var(--ink);border-radius:1.5mm;text-align:center;font-size:11pt}
+.banner.void{border:2px solid var(--ink);font-size:13pt}
+.banner-sub{margin-top:1mm;font-size:9pt;font-weight:400;color:var(--muted)}
+.notice{margin:2mm 0 0;text-align:center;font-size:9pt;color:var(--muted)}
+.sheet .wm{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;z-index:2;font-size:110pt;font-weight:700;color:rgba(0,0,0,.09);transform:rotate(-24deg);letter-spacing:4mm}
+.sheet.is-void table.items td{text-decoration:line-through;text-decoration-color:rgba(0,0,0,.35)}
+@media print{.sheet .wm{color:rgba(0,0,0,.12)}}
+.pages-info{font-size:13px}

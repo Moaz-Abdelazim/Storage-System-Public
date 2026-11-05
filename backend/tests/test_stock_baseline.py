@@ -96,29 +96,35 @@ def test_transfer_more_than_available_rejected(admin):
     assert r.status_code == 400
 
 
-def test_held_invoice_lifecycle(admin):
+def test_quote_reserve_complete_lifecycle(admin):
     _, loc = _setup(admin)
     p = make_product(admin, price=5, locations=[(loc["id"], 10)])
     item = {"product_id": p["id"], "quantity": 3, "location_id": loc["id"]}
-    inv = admin.post("/api/stock/out", json={"items": [item], "status": "held"}).json()
-    assert inv["status"] == "held" and get_product(admin, p["id"])["quantity"] == 7  # المعلّقة بتخصم فعلًا
-    # تعديل المعلّقة
+    inv = admin.post("/api/stock/out", json={"items": [item], "status": "quote"}).json()
+    assert inv["status"] == "quote" and get_product(admin, p["id"])["quantity"] == 10  # العرض مبيأثرش
+    res = admin.post(f"/api/stock/out/{inv['id']}/reserve").json()
+    got = get_product(admin, p["id"])
+    assert res["status"] == "reserved" and (got["quantity"], got["reserved"], got["available"]) == (10, 3, 7)
     upd = admin.put(f"/api/stock/out/{inv['id']}", json={"items": [{**item, "quantity": 5}]})
-    assert upd.status_code == 200 and get_product(admin, p["id"])["quantity"] == 5
-    # إتمامها
-    assert admin.post(f"/api/stock/out/{inv['id']}/complete").json()["status"] == "completed"
-    # المقفولة مينفعش تتعدّل أو تتمسح
-    assert admin.delete(f"/api/stock/out/{inv['id']}").status_code == 409
+    got = get_product(admin, p["id"])
+    assert upd.status_code == 200 and (got["quantity"], got["reserved"], got["available"]) == (10, 5, 5)
+    done = admin.post(f"/api/stock/out/{inv['id']}/complete").json()
+    got = get_product(admin, p["id"])
+    assert done["status"] == "completed" and (got["quantity"], got["reserved"], got["available"]) == (5, 0, 5)
+    # التمّ مينفعش يتعدّل أو يتحجز تاني
     assert admin.put(f"/api/stock/out/{inv['id']}", json={"items": [item]}).status_code == 409
+    assert admin.post(f"/api/stock/out/{inv['id']}/reserve").status_code == 409
 
 
-def test_delete_held_invoice_restores_stock(admin):
+def test_void_reserved_releases_reservation(admin):
     _, loc = _setup(admin)
     p = make_product(admin, locations=[(loc["id"], 10)])
-    inv = admin.post("/api/stock/out", json={"items": [{"product_id": p["id"], "quantity": 6, "location_id": loc["id"]}], "status": "held"}).json()
-    assert admin.delete(f"/api/stock/out/{inv['id']}").status_code == 200
+    inv = admin.post("/api/stock/out", json={"items": [{"product_id": p["id"], "quantity": 6, "location_id": loc["id"]}], "status": "reserved"}).json()
+    assert get_product(admin, p["id"])["available"] == 4
+    r = admin.post(f"/api/stock/out/{inv['id']}/void", json={"reason": "العميل ألغى"})
+    assert r.status_code == 200 and r.json()["status"] == "voided"
     got = get_product(admin, p["id"])
-    assert got["quantity"] == 10 and location_qty(got, loc["id"]) == 10
+    assert got["quantity"] == 10 and got["reserved"] == 0 and location_qty(got, loc["id"]) == 10
 
 
 def test_inactive_product_cannot_be_used(admin):

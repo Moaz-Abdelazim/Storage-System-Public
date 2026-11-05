@@ -26,8 +26,8 @@
       <div class="flex items-center gap-4">
         <span class="grid h-16 w-16 shrink-0 place-items-center rounded-full bg-brand-500 text-2xl font-bold text-white" x-text="user.name.charAt(0).toUpperCase()"></span>
         <div class="min-w-0 space-y-1.5 text-start">
-          <div class="truncate text-lg font-bold" x-text="user.name"></div>
-          <div class="truncate text-right text-sm text-muted" dir="ltr" x-text="'@' + user.username"></div>
+          <div class="truncate text-lg font-bold" x-text="user.name" :title="user.name"></div>
+          <div class="truncate text-right text-sm text-muted" dir="ltr" x-text="'@' + user.username" :title="'@' + user.username"></div>
           <span class="badge" :class="user.isAdmin ? 'bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'badge-mute'" x-text="user.role || (user.isAdmin ? 'مدير النظام' : 'مستخدم')"></span>
         </div>
       </div>
@@ -37,10 +37,22 @@
       </div>
     </section>
 
-    <!-- بيانات الشركة (أدمن بس): بتظهر في الفواتير المطبوعة -->
+    <!-- العنوان العام: بيتثبّت في QR المستند المطبوع (HTTPS فقط، دومين من غير مسار) -->
+    <section class="card card-pad" x-show="canCompany" x-cloak>
+      <h2 class="mb-1 flex items-center gap-2 text-base font-bold"><i class="fa-solid fa-link text-brand-500"></i>العنوان العام للنظام</h2>
+      <p class="mb-4 text-sm text-muted">بيتحط في رمز QR على المستندات المطبوعة. اكتب الدومين بس بـ https (مثال: <span dir="ltr" class="font-medium">https://stock.example.com</span>) من غير أي مسار. لو سبته فاضي النظام بيستخدم عنوان الصفحة الحالي.</p>
+      <form class="flex flex-wrap items-start gap-3" @submit.prevent="savePublicUrl()" novalidate>
+        <div class="min-w-0 flex-1 basis-72"><input type="url" dir="ltr" class="input" maxlength="255" placeholder="https://stock.example.com" x-model.trim="publicUrl.value" aria-label="العنوان العام">
+          <p class="mt-1 text-xs text-muted" x-text="publicUrl.source === 'env' ? 'القيمة الحالية جاية من إعدادات السيرفر (PUBLIC_BASE_URL)' : (publicUrl.source === 'db' ? 'محفوظ من هنا' : 'غير محدد')"></p>
+          <p class="field-err" x-show="publicUrl.error" x-text="publicUrl.error"></p></div>
+        <button type="submit" class="btn btn-primary" :disabled="publicUrl.saving"><i class="fa-solid fa-spinner animate-spin" x-show="publicUrl.saving"></i>حفظ</button>
+      </form>
+    </section>
+
+    <!-- بيانات الشركة (أدمن بس): بتظهر في المستندات المطبوعة -->
     <section class="card card-pad" x-show="canCompany" x-cloak>
       <h2 class="mb-1 flex items-center gap-2 text-base font-bold"><i class="fa-solid fa-building text-brand-500"></i>بيانات الشركة</h2>
-      <p class="mb-4 text-sm text-muted">الاسم والتليفونات واللوجو بيظهروا في هيدر الفاتورة المطبوعة (اللوجو بيتطبع بألوانه).</p>
+      <p class="mb-4 text-sm text-muted">الاسم والتليفونات واللوجو بيظهروا في هيدر المستند المطبوع (اللوجو بيتطبع بألوانه).</p>
       <form class="grid gap-4 sm:grid-cols-3" @submit.prevent="saveCompany()" novalidate>
         <div class="sm:col-span-3"><label class="label">اسم الشركة</label><input type="text" class="input" maxlength="150" x-model.trim="company.name"></div>
         <div><label class="label">رقم التليفون 1</label><input type="tel" class="input" dir="ltr" maxlength="30" x-model.trim="company.phone1"></div>
@@ -56,10 +68,10 @@
         <div class="space-y-2">
           <div class="flex flex-wrap gap-2">
             <label class="btn btn-outline cursor-pointer" :class="company.logoBusy && 'opacity-60'"><i class="fa-solid fa-upload"></i>رفع لوجو
-              <input type="file" class="sr-only" accept="image/png,image/jpeg,image/webp" @change="uploadLogo($event.target.files[0]); $event.target.value = ''" :disabled="company.logoBusy"></label>
+              <input type="file" class="sr-only" accept="image/png,image/jpeg" @change="uploadLogo($event.target.files[0]); $event.target.value = ''" :disabled="company.logoBusy"></label>
             <button type="button" class="btn btn-ghost text-red-600" x-show="company.has_logo" x-cloak @click="removeLogo()" :disabled="company.logoBusy">مسح اللوجو</button>
           </div>
-          <p class="text-xs text-muted">PNG أو JPEG أو WebP بحد أقصى 5 ميجا (الصور الكبيرة بتتصغّر تلقائيًا قبل الرفع).</p>
+          <p class="text-xs text-muted">PNG أو JPG فقط بحد أقصى 1 ميجا (الصور الكبيرة بتتصغّر تلقائيًا في المتصفح قبل الرفع).</p>
         </div>
       </div>
     </section>
@@ -111,11 +123,16 @@
         <div class="grid grid-cols-3 gap-3 text-center">
           <div class="rounded-xl bg-brand-500/10 p-3"><div class="text-xs text-muted">منتجات جديدة</div><div class="text-2xl font-bold tabular-nums text-brand-600" x-text="result && result.created"></div></div>
           <div class="rounded-xl bg-blue-500/10 p-3"><div class="text-xs text-muted">اتحدّثت</div><div class="text-2xl font-bold tabular-nums text-blue-600" x-text="result && result.updated"></div></div>
-          <div class="rounded-xl bg-red-500/10 p-3"><div class="text-xs text-muted">أخطاء</div><div class="text-2xl font-bold tabular-nums text-red-600" x-text="result && result.errors.length"></div></div>
+          <div class="rounded-xl bg-red-500/10 p-3"><div class="text-xs text-muted">أخطاء</div><div class="text-2xl font-bold tabular-nums text-red-600" x-text="result && result.errors_total"></div></div>
         </div>
-        <ul class="max-h-60 space-y-1.5 overflow-y-auto rounded-xl border border-line bg-soft p-3 text-sm" x-show="result && result.errors.length">
-          <template x-for="(e, i) in (result ? result.errors : [])" :key="i"><li class="flex gap-2 text-red-700 dark:text-red-300"><i class="fa-solid fa-circle-exclamation mt-1 text-xs"></i><span x-text="errText(e)"></span></li></template>
-        </ul>
+        <!-- أخطاء منظمة {row, column, message}: صف في الملف + العمود + السبب (بحد أقصى 500 مع عدّاد الإجمالي) -->
+        <div class="max-h-72 overflow-auto rounded-xl border border-line" x-show="result && result.errors.length" x-cloak>
+          <table class="tbl">
+            <thead><tr><th class="w-20">الصف</th><th class="w-36">العمود</th><th>المشكلة</th></tr></thead>
+            <tbody><template x-for="(e, i) in (result ? result.errors : [])" :key="i"><tr><td class="tabular-nums" x-text="e.row ?? '—'"></td><td x-text="e.column || '—'"></td><td class="whitespace-normal text-red-700 dark:text-red-300" x-text="errText(e)"></td></tr></template></tbody>
+          </table>
+        </div>
+        <p class="text-xs text-muted" x-show="result && result.truncated" x-cloak x-text="'اتعرض أول ' + (result ? result.errors.length : 0) + ' خطأ من ' + (result ? result.errors_total : 0) + ' - صلّح دول وارفع الملف تاني.'"></p>
       </div>
     </section>
   </div>

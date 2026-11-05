@@ -1,5 +1,7 @@
 // =====================================================================
-//  invoice-print.js — طباعة فاتورة وارد/صادر على A4 (أبيض وأسود).
+//  invoice-print.js — طباعة إذن إضافة / إذن صرف / عرض سعر / إذن حجز على A4 (تصميم بألوان خفيفة بتطلع واضحة حتى لو الطباعة أبيض وأسود).
+//  كل المستندات مخزنية غير ضريبية. عناوين المستند والعبارات التحذيرية (عرض سعر غير مؤثر على المخزون، إذن حجز...، ملغاة)
+//  بتيجي من السيرفر (data.labels) عشان تتطابق مع الشاشة. الموقع التفصيلي (الرف) مش بيتطبع: نسخة العميل فيها اسم المخزن بس.
 //  - بيجيب كل بيانات الفاتورة من endpoint واحد (GET /api/stock/{kind}/{id}/print).
 //  - التقسيم لصفحات بيتم هنا بقياس ارتفاع كل سطر فعليًا (مش بالاعتماد على CSS بس) عشان "صفحة X من Y"
 //    تشتغل في كل المتصفحات، وهيدر الجدول يتكرر، والسطر ما يتقطعش، والإجماليات والتوقيعات تفضل مع بعض في آخر صفحة.
@@ -7,16 +9,16 @@
 import { api, ApiError } from "./api.js";
 import { guard } from "./auth.js";
 import { API_BASE } from "./config.js";
-import { getQuery } from "./utils.js";
+import { getQuery, applyDataStyles } from "./utils.js";
 import { PRINT_CONFIG } from "./print-config.js";
 
 const kind = getQuery("kind") === "out" ? "out" : "in";
 const id = Number(getQuery("id")) || 0;
 const T = {
-  in: { title: "فاتورة وارد", kindLabel: "وارد", billed: "المورّد", user: "استلمها" },
-  out: { title: "فاتورة صادر", kindLabel: "صادر", billed: "فاتورة إلى", user: "سلّمها" },
+  in: { title: "إذن إضافة", kindLabel: "إضافة", billed: "المورّد", user: "استلمه" },
+  out: { title: "إذن صرف", kindLabel: "صرف", billed: "إلى", user: "أنشأه" },
 }[kind];
-document.body.dataset.kind = kind; // لون الفاتورة: وارد أخضر / صادر برتقالي
+document.body.dataset.kind = kind; // لون المستند: إضافة أخضر / صرف برتقالي
 const QR_KEY = "print_show_qr";
 const EPS_PX = 6; // هامش أمان صغير عشان فروق التقريب بين القياس والرسم
 
@@ -54,7 +56,7 @@ function invoiceUrl() {
 
 // ---------- أجزاء الصفحة (HTML) ----------
 const COLS = [11, 0, 16, 29, 16, 25, 27]; // mm (0 = الباقي لاسم الصنف)
-const colgroup = () => `<colgroup>${COLS.map((w) => `<col${w ? ` style="width:${w}mm"` : ""}>`).join("")}</colgroup>`;
+const colgroup = () => `<colgroup>${COLS.map((w) => `<col${w ? ` data-s="width:${w}mm"` : ""}>`).join("")}</colgroup>`;
 const thead = () => `<tr><th>#</th><th>الصنف</th><th>الوحدة</th><th>المخزن</th><th>الكمية</th><th>سعر الوحدة (ج.م)</th><th>الإجمالي (ج.م)</th></tr>`;
 
 function rowHtml(it) {
@@ -75,22 +77,35 @@ function brandHtml() {
   return `<div class="brand">${mark}<div><div class="co-name">${esc(c.name || "")}</div>${phones ? `<div class="co-ph">${phones}</div>` : ""}</div></div>`;
 }
 
+const docTitle = () => (data && data.labels && data.labels.title) || T.title;
+const isVoided = () => !!(data && data.invoice && data.invoice.status === "voided");
+
+// شريط التنبيه تحت العنوان: "عرض سعر — غير مؤثر على المخزون" / "إذن حجز — ..." / "ملغاة" + سبب الإلغاء
+function bannerHtml() {
+  const b = data.labels && data.labels.banner;
+  if (!b) return "";
+  const inv = data.invoice;
+  const why = isVoided() ? `<div class="banner-sub">${inv.void_reason ? `السبب: ${esc(inv.void_reason)}` : ""}${inv.voided_by ? ` · بواسطة ${esc(inv.voided_by)}` : ""}${inv.voided_at ? ` · <span class="num">${fmtDate(inv.voided_at)}</span>` : ""}</div>` : "";
+  return `<div class="banner${isVoided() ? " void" : ""}"><b>${esc(b)}</b>${why}</div>`;
+}
+
 function headerFull() {
   const inv = data.invoice;
   const billed = `<div class="billed"><div class="cap">${T.billed}</div><div class="p-name">${esc(inv.party_name || "غير محدد")}</div>
       ${inv.party_phone ? `<div class="p-line"><span class="num">${esc(inv.party_phone)}</span></div>` : ""}
       ${inv.party_address ? `<div class="p-line">${esc(inv.party_address)}</div>` : ""}</div>`;
   return `<div class="top">${brandHtml()}
-      <div class="title-box"><div class="title">فاتورة</div></div></div>
+      <div class="title-box"><div class="title">${esc(docTitle())}</div></div></div>
+    ${bannerHtml()}
     <div class="info">${billed}
-      <div class="meta"><div><span>رقم الفاتورة</span><b class="num">${inv.id}</b></div>
+      <div class="meta"><div><span>رقم المستند</span><b class="num">${inv.id}</b></div>
         <div><span>التاريخ</span><b class="num">${fmtDate(inv.date)}</b></div>
         <div><span>${T.user}</span><b>${esc(inv.user_name || "-")}</b></div></div></div>
     ${inv.notes ? `<div class="notes"><b>ملاحظات:</b> ${esc(inv.notes)}</div>` : ""}`;
 }
 
 function headerCont() {
-  return `<div class="hdr-cont"><span>${T.title} رقم <b class="num">${data.invoice.id}</b></span><span>${esc(data.company.name || "")}</span></div>`;
+  return `<div class="hdr-cont"><span>${esc(docTitle())} رقم <b class="num">${data.invoice.id}</b></span><span>${esc(data.company.name || "")}</span></div>`;
 }
 
 function adjLabel(base, a) {
@@ -100,17 +115,23 @@ function adjLabel(base, a) {
 function footerHtml() {
   const t = data.totals;
   const hasAdj = !!(t.discount || t.tax);
+  // الترتيب: إجمالي الأصناف قبل الخصم ← الخصم ← صافي القيمة بعد الخصم ← الضريبة (نسبة % على الصافي) ← الإجمالي
   const rows = [];
-  if (hasAdj) rows.push(`<tr><td>الإجمالي الفرعي</td><td>${cur(t.subtotal)}</td></tr>`);
-  if (t.discount) rows.push(`<tr><td>${adjLabel("الخصم", t.discount)}</td><td>${cur(t.discount.amount)}</td></tr>`);
+  if (hasAdj) rows.push(`<tr><td>إجمالي قيمة الأصناف قبل الخصم</td><td>${cur(t.subtotal)}</td></tr>`);
+  if (t.discount) {
+    rows.push(`<tr><td>${adjLabel("الخصم", t.discount)}</td><td>${cur(t.discount.amount)}</td></tr>`);
+    rows.push(`<tr><td>صافي قيمة الأصناف بعد الخصم</td><td>${cur(t.net_amount)}</td></tr>`);
+  }
   if (t.tax) rows.push(`<tr><td>${adjLabel("الضريبة", t.tax)}</td><td>${cur(t.tax.amount)}</td></tr>`);
-  const grand = `<div class="grand"><span>${hasAdj ? "الإجمالي النهائي" : "إجمالي الفاتورة"}</span><b><span class="num">${fmtMoney(t.grand_total)}</span><small>ج.م</small></b></div>`;
-  const qr = showQr && qrAvailable() ? `<div class="qr">${qrSvg(invoiceUrl())}<div>امسح لفتح الفاتورة في النظام</div></div>` : "";
+  const grand = `<div class="grand"><span>${hasAdj ? "الإجمالي" : "إجمالي قيمة الأصناف"}</span><b><span class="num">${fmtMoney(t.grand_total)}</span><small>ج.م</small></b></div>`;
+  const qr = showQr && qrAvailable() ? `<div class="qr">${qrSvg(invoiceUrl())}<div>امسح لفتح المستند في النظام</div></div>` : "";
+  const notice = data.labels && data.labels.notice ? `<div class="notice">${esc(data.labels.notice)}</div>` : "";
   return `<div class="foot">
     <div class="foot-top">
       <div class="sum-note">عدد الأصناف: <b class="num">${fmtQty(t.items_count)}</b><br>إجمالي الكمية: <b class="num">${fmtQty(t.total_quantity)}</b></div>
       <div class="totals-wrap">${rows.length ? `<table class="totals">${rows.join("")}</table>` : ""}${grand}</div>
     </div>
+    ${notice}
     <div class="sign-row">
       <div class="sign"><div class="line">توقيع المستلم</div></div>
       <div class="sign"><div class="line">توقيع المسلّم</div></div>
@@ -124,6 +145,7 @@ function measure() {
   m.innerHTML = `<div id="m-hf">${headerFull()}</div><div id="m-hc">${headerCont()}</div>
     <table class="items" id="m-tbl">${colgroup()}<thead>${thead()}</thead><tbody>${data.items.map(rowHtml).join("")}</tbody></table>
     <div id="m-ft">${footerHtml()}</div><div class="probe" id="m-probe"></div>`;
+  applyDataStyles(m);
   const h = (s) => m.querySelector(s).getBoundingClientRect().height;
   const out = {
     page: h("#m-probe") - EPS_PX,
@@ -165,12 +187,13 @@ function render() {
   const pages = paginate(ms);
   const total = pages.length;
   $("#sheets").innerHTML = pages.map((rows, p) => `
-    <section class="sheet"><div class="sheet-inner">
+    <section class="sheet${isVoided() ? " is-void" : ""}">${isVoided() ? '<div class="wm" aria-hidden="true">ملغاة</div>' : ""}<div class="sheet-inner">
       ${p === 0 ? headerFull() : headerCont()}
       <table class="items">${colgroup()}<thead>${thead()}</thead><tbody>${rows.map((r) => rowHtml(data.items[r])).join("")}</tbody></table>
       ${p === total - 1 ? footerHtml() : ""}
     </div>
-    <div class="pgno"><span>${T.title} <span class="num">#${data.invoice.id}</span></span><span>صفحة <span class="num">${p + 1}</span> من <span class="num">${total}</span></span></div></section>`).join("");
+    <div class="pgno"><span>${esc(docTitle())} <span class="num">#${data.invoice.id}</span></span><span>صفحة <span class="num">${p + 1}</span> من <span class="num">${total}</span></span></div></section>`).join("");
+  applyDataStyles($("#sheets"));
   $("#pagesInfo").textContent = `${data.items.length} صنف · ${total} صفحة`;
   fitToScreen();
   document.body.dataset.ready = "1"; // علامة للاختبارات الآلية
@@ -203,7 +226,7 @@ async function waitLogo() {
 async function main() {
   if (!guard({ perm: ["invoices.print"] })) return;
   $("#backLink").href = id ? `invoice.html#kind=${kind}&id=${id}` : "movements.html";
-  if (!id) return showState("الرابط مش فيه رقم فاتورة.", true);
+  if (!id) return showState("الرابط مش فيه رقم مستند.", true);
 
   const wrap = $("#qrWrap"), toggle = $("#qrToggle");
   if (PRINT_CONFIG.allowQrToggle && qrAvailable()) {
@@ -219,9 +242,9 @@ async function main() {
     data = await api.get(`/api/stock/${kind}/${id}/print`);
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) return; // api.js بيحوّل لصفحة الدخول
-    return showState(e.message || "تعذّر تحميل الفاتورة", true);
+    return showState(e.message || "تعذّر تحميل المستند", true);
   }
-  document.title = `${T.title} ${data.invoice.id}`;
+  document.title = `${docTitle()} ${data.invoice.id}`;
   await Promise.all([document.fonts ? document.fonts.ready : null, waitLogo()]);
   $("#state").hidden = true;
   $("#sheets").hidden = false;

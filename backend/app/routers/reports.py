@@ -4,12 +4,12 @@ from ..display_utils import format_user_display
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session, joinedload
 
 from .. import models, auth, permissions
 from ..database import get_db
-from ..query_helpers import contains, end_exclusive, page_args, paged, parse_dt
+from ..query_helpers import contains, end_exclusive, join_valid, movement_invoice, out_net_factor, page_args, paged, parse_dt, valid_invoice
 
 router = APIRouter(prefix="/api/reports", tags=["Reports"])
 
@@ -52,17 +52,22 @@ def out_totals(db: Session = Depends(get_db), admin: models.User = Depends(auth.
     month_start = datetime(now.year, now.month, 1)
     year_start = datetime(now.year, 1, 1)
 
+    O, OI = models.StockOutInvoice, models.StockOutItem
+
     def _totals_since(start: datetime):
-        row = (
-            db.query(
-                func.sum(models.StockOutItem.quantity),
-                func.sum(models.StockOutItem.quantity * func.coalesce(models.StockOutItem.unit_price, 0)),
-            )
-            .join(models.StockOutInvoice, models.StockOutInvoice.id == models.StockOutItem.invoice_id)
-            .filter(models.StockOutInvoice.date >= start)
-            .first()
+        """إذونات الصرف **المكتملة** بس. value = صافي المبيعات بعد الخصم (من غير ضريبة)؛ الباقي تفصيل: قبل الخصم/الخصومات/الضريبة/الإجمالي."""
+        qty = (
+            db.query(func.coalesce(func.sum(OI.quantity), 0))
+            .join(O, join_valid(O, OI)).filter(O.date >= start).scalar()
         )
-        return {"quantity": round(row[0] or 0, 3), "value": round(row[1] or 0, 2)}
+        row = (
+            db.query(func.coalesce(func.sum(O.subtotal_amount), 0), func.coalesce(func.sum(O.discount_amount), 0),
+                     func.coalesce(func.sum(O.tax_amount), 0), func.coalesce(func.sum(O.grand_total), 0))
+            .filter(valid_invoice(O), O.date >= start).first()
+        )
+        gross, disc, tax, grand = (round(float(x or 0), 2) for x in row)
+        return {"quantity": round(float(qty or 0), 3), "value": round(gross - disc, 2), "gross_sales": gross, "discounts": disc,
+                "net_sales": round(gross - disc, 2), "tax_collected": tax, "grand_total": grand}
 
     return {
         "today": _totals_since(day_start),
@@ -110,21 +115,26 @@ def movements(
     end_excl = end_exclusive(date_to) or now + timedelta(minutes=1)
     is_admin = permissions.has_permission(current_user, "finance.view")
 
-    def stats(inv, item):
-        count = db.query(func.count(inv.id)).filter(inv.date >= start, inv.date < end_excl).scalar() or 0
-        qty, value = (
+    def stats(inv, item, net: bool = False):
+        """مستندات completed بس. للصادر: value = صافي بعد توزيع الخصم، و gross = قبل الخصم."""
+        count = db.query(func.count(inv.id)).filter(valid_invoice(inv), inv.date >= start, inv.date < end_excl).scalar() or 0
+        line = item.quantity * func.coalesce(item.unit_price, 0)
+        qty, value, gross = (
             db.query(
                 func.coalesce(func.sum(item.quantity), 0),
-                func.coalesce(func.sum(item.quantity * func.coalesce(item.unit_price, 0)), 0),
+                func.coalesce(func.sum(line * out_net_factor(inv) if net else line), 0),
+                func.coalesce(func.sum(line), 0),
             )
-            .join(inv, inv.id == item.invoice_id)
+            .join(inv, join_valid(inv, item))
             .filter(inv.date >= start, inv.date < end_excl)
             .first()
         )
-        return count, float(qty or 0), float(value or 0)
+        return count, float(qty or 0), float(value or 0), float(gross or 0)
 
-    in_count, in_qty, in_value = stats(models.StockInInvoice, models.StockInItem)
-    out_count, out_qty, out_value = stats(models.StockOutInvoice, models.StockOutItem)
+    in_count, in_qty, in_value, _ = stats(models.StockInInvoice, models.StockInItem)
+    out_count, out_qty, out_value, out_gross = stats(models.StockOutInvoice, models.StockOutItem, net=True)
+    O = models.StockOutInvoice
+    tax_total = float(db.query(func.coalesce(func.sum(O.tax_amount), 0)).filter(valid_invoice(O), O.date >= start, O.date < end_excl).scalar() or 0)
     return {
         "period": {"from": start.isoformat(), "to": end_excl.isoformat()},
         "stock_in_invoices_count": in_count,
@@ -132,7 +142,10 @@ def movements(
         "total_in_qty": round(in_qty, 3),
         "total_out_qty": round(out_qty, 3),
         "total_in_value": round(in_value, 2) if is_admin else None,
-        "total_out_value": round(out_value, 2) if is_admin else None,
+        "total_out_value": round(out_value, 2) if is_admin else None,  # صافي بعد الخصم (من غير ضريبة)
+        "total_out_gross_value": round(out_gross, 2) if is_admin else None,  # إجمالي قيمة الأصناف قبل الخصم
+        "total_out_discount": round(out_gross - out_value, 2) if is_admin else None,
+        "total_out_tax": round(tax_total, 2) if is_admin else None,
     }
 
 
@@ -153,6 +166,7 @@ def top_products(
                 func.sum(models.StockInItem.quantity).label("total_qty"),
             )
             .join(models.StockInItem, models.StockInItem.product_id == models.Product.id)
+            .join(models.StockInInvoice, join_valid(models.StockInInvoice, models.StockInItem))
             .group_by(models.Product.id)
             .order_by(func.sum(models.StockInItem.quantity).desc())
             .limit(limit)
@@ -167,6 +181,7 @@ def top_products(
                 func.sum(models.StockOutItem.quantity).label("total_qty"),
             )
             .join(models.StockOutItem, models.StockOutItem.product_id == models.Product.id)
+            .join(models.StockOutInvoice, join_valid(models.StockOutInvoice, models.StockOutItem))
             .group_by(models.Product.id)
             .order_by(func.sum(models.StockOutItem.quantity).desc())
             .limit(limit)
@@ -226,6 +241,7 @@ def by_brand(db: Session = Depends(get_db), current_user: models.User = Depends(
 @router.get("/product-movements/{product_id}")
 def product_movements(
     product_id: int,
+    include_voided: int = 0,  # 1 = إظهار المستندات الملغاة بعلامة (مبتدخلش في الإجماليات)
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission("invoices.view")),
 ):
@@ -238,14 +254,14 @@ def product_movements(
     in_items = (
         db.query(models.StockInItem)
         .join(models.StockInInvoice)
-        .filter(models.StockInItem.product_id == product_id)
+        .filter(models.StockInItem.product_id == product_id, movement_invoice(models.StockInInvoice, bool(include_voided)))
         .order_by(models.StockInInvoice.date.desc())
         .all()
     )
     out_items = (
         db.query(models.StockOutItem)
         .join(models.StockOutInvoice)
-        .filter(models.StockOutItem.product_id == product_id)
+        .filter(models.StockOutItem.product_id == product_id, movement_invoice(models.StockOutInvoice, bool(include_voided)))
         .order_by(models.StockOutInvoice.date.desc())
         .all()
     )
@@ -259,6 +275,7 @@ def product_movements(
             "party_name": it.invoice.supplier.name if it.invoice.supplier else None,
             "user_name": format_user_display(it.invoice.received_by, it.invoice.received_by_username),
             "notes": it.invoice.notes,
+            "status": it.invoice.status,
         }
         for it in in_items
     ]
@@ -271,6 +288,7 @@ def product_movements(
             "party_name": it.invoice.recipient.name if it.invoice.recipient else None,
             "user_name": format_user_display(it.invoice.delivered_by, it.invoice.delivered_by_username),
             "notes": it.invoice.notes,
+            "status": it.invoice.status,
         }
         for it in out_items
     ]
@@ -279,8 +297,8 @@ def product_movements(
         "product": {"id": product.id, "sku": product.sku, "name": product.name, "quantity": product.quantity},
         "stock_in": stock_in,
         "stock_out": stock_out,
-        "total_in_qty": sum(i["quantity"] for i in stock_in),
-        "total_out_qty": sum(i["quantity"] for i in stock_out),
+        "total_in_qty": sum(i["quantity"] for i in stock_in if i["status"] == "completed"),
+        "total_out_qty": sum(i["quantity"] for i in stock_out if i["status"] == "completed"),
     }
 
 
@@ -300,7 +318,7 @@ def top_suppliers(
             func.sum(models.StockInItem.quantity * func.coalesce(models.StockInItem.unit_price, 0)),
             func.count(func.distinct(models.StockInInvoice.id)),
         )
-        .join(models.StockInInvoice, models.StockInInvoice.supplier_id == models.Supplier.id)
+        .join(models.StockInInvoice, and_(models.StockInInvoice.supplier_id == models.Supplier.id, valid_invoice(models.StockInInvoice)))
         .join(models.StockInItem, models.StockInItem.invoice_id == models.StockInInvoice.id)
         .group_by(models.Supplier.id)
         .order_by(func.sum(models.StockInItem.quantity).desc())
@@ -326,10 +344,10 @@ def top_recipients(
             models.Recipient.id,
             models.Recipient.name,
             func.sum(models.StockOutItem.quantity),
-            func.sum(models.StockOutItem.quantity * func.coalesce(models.StockOutItem.unit_price, 0)),
+            func.sum(models.StockOutItem.quantity * func.coalesce(models.StockOutItem.unit_price, 0) * out_net_factor(models.StockOutInvoice)),
             func.count(func.distinct(models.StockOutInvoice.id)),
         )
-        .join(models.StockOutInvoice, models.StockOutInvoice.recipient_id == models.Recipient.id)
+        .join(models.StockOutInvoice, and_(models.StockOutInvoice.recipient_id == models.Recipient.id, valid_invoice(models.StockOutInvoice)))
         .join(models.StockOutItem, models.StockOutItem.invoice_id == models.StockOutInvoice.id)
         .group_by(models.Recipient.id)
         .order_by(func.sum(models.StockOutItem.quantity).desc())
@@ -349,7 +367,7 @@ def _party_products(db: Session, inv, item, fk: str, party_id: int, search: Opti
     grouped = (
         db.query(P.id, P.name, P.sku, func.sum(item.quantity).label("q"), func.count(func.distinct(inv.id)).label("n"))
         .join(item, item.product_id == P.id)
-        .join(inv, inv.id == item.invoice_id)
+        .join(inv, join_valid(inv, item))
         .filter(getattr(inv, fk) == party_id)
     )
     if search and search.strip():

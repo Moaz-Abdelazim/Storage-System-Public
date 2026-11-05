@@ -76,7 +76,7 @@
           <ul class="divide-y divide-line px-5">
             <template x-for="p in putaway.items" :key="p.product_id + '-' + p.location_id">
               <li class="flex items-center justify-between gap-3 py-3 text-sm">
-                <div class="min-w-0"><div class="truncate font-medium" x-text="p.name"></div><div class="mt-0.5 flex items-center gap-2 text-xs text-muted"><loc-code :code="p.location_code"></loc-code><span x-text="num(p.quantity) + ' ' + (p.unit || '')"></span></div></div>
+                <div class="min-w-0"><div class="truncate font-medium" x-text="p.name" :title="p.name"></div><div class="mt-0.5 flex items-center gap-2 text-xs text-muted"><loc-code :code="p.location_code"></loc-code><span x-text="num(p.quantity) + ' ' + (p.unit || '')"></span></div></div>
                 <button type="button" class="btn btn-outline btn-sm shrink-0" @click="prefill(p)"><i class="fa-solid fa-right-left"></i>نقل</button>
               </li>
             </template>

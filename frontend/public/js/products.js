@@ -134,7 +134,7 @@ document.addEventListener("alpine:init", () => {
       const disable = p.is_active !== false;
       const ok = await confirmAction({
         title: disable ? "تعطيل المنتج؟" : "تفعيل المنتج؟",
-        message: disable ? `"${p.name}" هيختفي من القوايم والفواتير الجديدة، وسجلّه بيفضل محفوظ.` : `"${p.name}" هيرجع يظهر في القوايم والفواتير.`,
+        message: disable ? `"${p.name}" هيختفي من القوايم والمستندات الجديدة، وسجلّه بيفضل محفوظ.` : `"${p.name}" هيرجع يظهر في القوايم والمستندات.`,
         confirmText: disable ? "تعطيل" : "تفعيل", danger: disable,
       });
       if (!ok) return;

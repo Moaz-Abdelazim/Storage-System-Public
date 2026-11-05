@@ -4,7 +4,7 @@
 // =====================================================================
 import { api } from "./api.js";
 import { can, getUser } from "./auth.js";
-import { num, money, fmtDateTime, longToday, errMsg } from "./utils.js";
+import { num, money, fmtDateTime, longToday, errMsg , ellipsize, wrapLines } from "./utils.js";
 
 const PALETTE = ["#10B981", "#3B82F6", "#F59E0B", "#8B5CF6", "#EC4899", "#94A3B8"];
 const IN_COLOR = "#10B981";
@@ -98,7 +98,8 @@ function drawDist(canvas, items) {
         legend: { display: false },
         tooltip: {
           rtl: true, textDirection: "rtl", padding: 10, cornerRadius: 10,
-          callbacks: { label: (c) => ` ${num(c.parsed)} قطعة (${items[c.dataIndex].pct}%)` },
+          // الاسم الكامل (ملفوف على أسطر) في عنوان الـ tooltip - الاسم في الليجند ممكن يتختصر
+          callbacks: { title: (c) => wrapLines(items[c[0].dataIndex].label, 26), label: (c) => ` ${num(c.parsed)} قطعة (${items[c.dataIndex].pct}%)` },
         },
       },
     },
@@ -119,10 +120,10 @@ function describeMovement(r, i) {
   const isIn = r.kind === "in";
   return {
     key: `${r.kind}-${r.invoice_id ?? i}`, kind: r.kind,
-    label: isIn ? "وارد" : "صادر",
+    label: isIn ? "إضافة" : "صرف",
     icon: isIn ? "fa-arrow-down" : "fa-arrow-up",
     tile: isIn ? "bg-brand-500/10 text-brand-600 dark:text-brand-300" : "bg-orange-500/10 text-orange-600 dark:text-orange-300",
-    ref: `فاتورة #${r.invoice_id}`, sub: r.party_role || "",
+    ref: `${isIn ? "إذن إضافة" : "إذن صرف"} #${r.invoice_id}`, sub: r.party_role || "",
     href: `invoice.html#kind=${r.kind}&id=${r.invoice_id}`,
     party: r.party_name || "-", user: r.user_name || "-", date: fmtDateTime(r.date),
     value: r.total_value != null ? money(r.total_value) : null,
@@ -180,12 +181,14 @@ document.addEventListener("alpine:init", () => {
 
     get finance() {
       const o = this.out || {};
-      const v = (x) => (x && x.value != null ? money(x.value) : "—");
+      // قيمة الصرف = صافي المبيعات بعد الخصم (من غير ضريبة). التفاصيل: قبل الخصم / الخصومات / الضريبة
+      const v = (x) => (x && x.net_sales != null ? money(x.net_sales) : "—");
+      const sub = (x) => (x && x.gross_sales != null ? `قبل الخصم ${money(x.gross_sales)}${x.discounts > 0 ? ` · خصم ${money(x.discounts)}` : ""}${x.tax_collected > 0 ? ` · ضريبة ${money(x.tax_collected)}` : ""}` : "");
       return [
-        { label: "قيمة المخزون الحالية", value: this.adminData ? money(this.adminData.total_stock_value) : "—", icon: "fa-vault" },
-        { label: "صادر اليوم", value: v(o.today), icon: "fa-calendar-day" },
-        { label: "صادر الشهر", value: v(o.month), icon: "fa-calendar-days" },
-        { label: "صادر السنة", value: v(o.year), icon: "fa-calendar" },
+        { label: "قيمة المخزون بأسعار البيع", value: this.adminData ? money(this.adminData.total_stock_value) : "—", sub: "سعر البيع × الكمية (مش تكلفة)", icon: "fa-vault" },
+        { label: "صافي مبيعات اليوم", value: v(o.today), sub: sub(o.today), icon: "fa-calendar-day" },
+        { label: "صافي مبيعات الشهر", value: v(o.month), sub: sub(o.month), icon: "fa-calendar-days" },
+        { label: "صافي مبيعات السنة", value: v(o.year), sub: sub(o.year), icon: "fa-calendar" },
       ];
     },
 

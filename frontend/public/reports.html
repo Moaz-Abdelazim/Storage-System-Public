@@ -57,7 +57,7 @@
         </div>
 
         <div class="card card-pad">
-          <div class="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 class="text-base font-bold">خريطة النشاط</h2><p class="text-xs text-muted">عدد العمليات (فواتير ونقل) حسب اليوم والساعة — عشان تعرف أوقات الذروة</p></div>
+          <div class="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h2 class="text-base font-bold">خريطة النشاط</h2><p class="text-xs text-muted">عدد العمليات (إذونات ونقل) حسب اليوم والساعة — عشان تعرف أوقات الذروة</p></div>
             <span class="badge badge-info" x-show="heat && heat.peak" x-text="heat && heat.peak ? 'الذروة: ' + dayNames[heat.peak.weekday] + ' ' + hourLabel(heat.peak.hour) : ''"></span></div>
           <div class="overflow-x-auto" x-show="heat">
             <div class="min-w-[640px] space-y-1">
@@ -159,9 +159,9 @@
       <div x-show="st.margin === 'error'" x-cloak class="card empty"><p class="mb-3 text-red-500" x-text="err.margin"></p><button type="button" class="btn btn-outline btn-sm" @click="ensure('margin', true)">إعادة المحاولة</button></div>
       <template x-if="st.margin === 'ok' && d.margin"><div class="space-y-5">
         <div class="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-relaxed text-amber-900 dark:border-amber-500/25 dark:bg-amber-950/30 dark:text-amber-100" x-show="d.margin.summary.coverage_pct < 70">
-          <i class="fa-solid fa-circle-info"></i> الأرقام تقديرية: متاح تكلفة شراء لـ <b x-text="pct(d.margin.summary.coverage_pct, 0)"></b> بس من الأصناف المباعة. سجّل <b>سعر الشراء</b> في فواتير الوارد عشان التقرير يبقى أدق.</div>
+          <i class="fa-solid fa-circle-info"></i> الأرقام تقديرية: متاح تكلفة شراء لـ <b x-text="pct(d.margin.summary.coverage_pct, 0)"></b> بس من الأصناف المباعة. سجّل <b>سعر الشراء</b> في إذونات الإضافة عشان التقرير يبقى أدق.</div>
         <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <div class="card card-pad"><div class="kpi-label">إيراد المبيعات</div><div class="mt-1 text-2xl font-bold tabular-nums" x-text="money(d.margin.summary.revenue)"></div></div>
+          <div class="card card-pad"><div class="kpi-label">صافي الإيراد بعد الخصم</div><div class="mt-1 text-2xl font-bold tabular-nums" x-text="money(d.margin.summary.revenue)"></div></div>
           <div class="card card-pad"><div class="kpi-label">تكلفة البضاعة المباعة</div><div class="mt-1 text-2xl font-bold tabular-nums" x-text="money(d.margin.summary.cogs)"></div></div>
           <div class="card card-pad"><div class="kpi-label">إجمالي الربح</div><div class="mt-1 text-2xl font-bold tabular-nums" :class="d.margin.summary.profit >= 0 ? 'text-brand-600' : 'text-red-600'" x-text="money(d.margin.summary.profit)"></div></div>
           <div class="card card-pad"><div class="kpi-label">هامش الربح</div><div class="mt-1 text-2xl font-bold tabular-nums" x-text="d.margin.summary.margin_pct != null ? pct(d.margin.summary.margin_pct) : '—'"></div><div class="text-xs text-red-600" x-show="d.margin.summary.negative_count" x-text="d.margin.summary.negative_count + ' صنف بخسارة'"></div></div>
@@ -170,7 +170,7 @@
           <div class="flex flex-wrap items-center gap-2 border-b border-line p-4"><h2 class="me-auto text-base font-bold">ربحية الأصناف</h2>
             <select class="select h-9 w-40 text-[13px]" x-model="marginSort" @change="goPage('margin', 1)" aria-label="ترتيب"><option value="profit">الأعلى ربحًا</option><option value="margin">الأعلى هامشًا</option><option value="revenue">الأعلى إيرادًا</option><option value="quantity">الأكثر مبيعًا</option></select>
             <input type="search" class="input h-9 w-48 text-[13px]" placeholder="بحث..." x-model="q.margin" @input.debounce.350ms="onSearch('margin')"><button type="button" class="btn btn-outline btn-sm" @click="exportCsv('margin')"><i class="fa-solid fa-file-csv"></i>CSV</button></div>
-          <div class="overflow-x-auto px-3 pb-3" :class="busy && 'opacity-60'"><table class="tbl"><thead><tr><th>الصنف</th><th>الكمية المباعة</th><th>الإيراد</th><th>متوسط التكلفة</th><th>الربح</th><th>الهامش</th></tr></thead><tbody>
+          <div class="overflow-x-auto px-3 pb-3" :class="busy && 'opacity-60'"><table class="tbl"><thead><tr><th>الصنف</th><th>الكمية المباعة</th><th>صافي الإيراد</th><th>متوسط التكلفة</th><th>الربح</th><th>الهامش</th></tr></thead><tbody>
             <template x-for="r in d.margin.items" :key="r.product_id"><tr><td><div class="font-medium" x-text="r.name"></div><div class="text-xs text-muted" x-text="r.sku || ''"></div></td><td class="tabular-nums" x-text="num(r.quantity)"></td><td class="tabular-nums" x-text="money(r.revenue)"></td>
               <td class="tabular-nums" x-text="r.avg_cost != null ? money(r.avg_cost) : '—'"></td>
               <td class="font-medium tabular-nums" :class="r.profit == null ? 'text-muted' : r.profit < 0 ? 'text-red-600' : 'text-brand-600'" x-text="r.profit != null ? money(r.profit) : 'بدون تكلفة'"></td>
@@ -206,7 +206,7 @@
                 <table class="tbl"><thead><tr><th>المورد</th><th>متوسط السعر</th><th>الكمية المشتراة</th></tr></thead><tbody>
                   <template x-for="s in r.suppliers" :key="s.name"><tr><td x-text="s.name"></td><td class="tabular-nums" x-text="money(s.avg_price)"></td><td class="tabular-nums" x-text="num(s.qty)"></td></tr></template></tbody></table></div></td></tr>
             </tbody></template></table>
-            <p class="empty" x-show="!d.prices.items.length">مفيش أسعار شراء مسجلة. سجّل سعر الشراء في فواتير الوارد.</p></div>
+            <p class="empty" x-show="!d.prices.items.length">مفيش أسعار شراء مسجلة. سجّل سعر الشراء في إذونات الإضافة.</p></div>
           <div class="border-t border-line px-4" :class="busyTab.prices && 'opacity-60'"><ui-pager :page="d.prices.page" :pages="d.prices.total_pages" :total="d.prices.total" :size="d.prices.page_size" @go="goPage('prices', $event.detail)"></ui-pager></div>
         </div>
       </div></template>
@@ -220,7 +220,7 @@
         <div class="card card-pad"><h2 class="mb-4 text-base font-bold">نشاط الموظفين</h2><div class="relative h-72"><canvas x-ref="empCanvas" role="img" aria-label="نشاط الموظفين"></canvas></div></div>
         <div class="card">
           <div class="flex flex-wrap items-center gap-2 border-b border-line p-4"><h2 class="me-auto text-base font-bold">تفصيل الأداء</h2><input type="search" class="input h-9 w-48 text-[13px]" placeholder="بحث..." x-model="q.employees" @input.debounce.350ms="onSearch('employees')"><button type="button" class="btn btn-outline btn-sm" @click="exportCsv('employees')"><i class="fa-solid fa-file-csv"></i>CSV</button></div>
-          <div class="overflow-x-auto px-3 pb-3"><table class="tbl"><thead><tr><th>المستخدم</th><th>فواتير وارد</th><th>كمية وارد</th><th>فواتير صادر</th><th>كمية صادر</th><th>نقل</th><th>تعديلات</th><th>إجمالي العمليات</th></tr></thead><tbody>
+          <div class="overflow-x-auto px-3 pb-3"><table class="tbl"><thead><tr><th>المستخدم</th><th>إذونات إضافة</th><th>كمية وارد</th><th>إذونات صرف</th><th>كمية صادر</th><th>نقل</th><th>تعديلات</th><th>إجمالي العمليات</th></tr></thead><tbody>
             <template x-for="r in d.employees.items" :key="r.username"><tr><td class="font-medium" x-text="r.username"></td><td class="tabular-nums" x-text="r.in_invoices"></td><td class="tabular-nums" x-text="num(r.in_qty)"></td><td class="tabular-nums" x-text="r.out_invoices"></td><td class="tabular-nums" x-text="num(r.out_qty)"></td><td class="tabular-nums" x-text="r.transfers"></td>
               <td><span class="tabular-nums" x-text="r.adjustments"></span> <span class="badge badge-warn" x-show="r.adjustments_net < 0" x-text="num(r.adjustments_net)"></span></td><td><b class="tabular-nums" x-text="r.operations"></b></td></tr></template></tbody></table>
             <p class="empty" x-show="!d.employees.items.length">مفيش نشاط في الفترة دي.</p></div>
@@ -234,7 +234,7 @@
       <div x-show="st.adjustments === 'loading'" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><template x-for="i in 4"><div class="skeleton h-24"></div></template></div>
       <div x-show="st.adjustments === 'error'" x-cloak class="card empty"><p class="mb-3 text-red-500" x-text="err.adjustments"></p><button type="button" class="btn btn-outline btn-sm" @click="ensure('adjustments', true)">إعادة المحاولة</button></div>
       <template x-if="st.adjustments === 'ok' && d.adjustments"><div class="space-y-5">
-        <div class="rounded-2xl border border-line bg-soft p-4 text-sm leading-relaxed text-muted"><i class="fa-solid fa-shield-halved text-brand-500"></i> التعديلات اليدوية على الكميات (جرد/تصحيح) بره الفواتير. التعديل الكبير (≥10 قطع و≥20% من الرصيد) بيتعلّم "مشتبه" للمراجعة.</div>
+        <div class="rounded-2xl border border-line bg-soft p-4 text-sm leading-relaxed text-muted"><i class="fa-solid fa-shield-halved text-brand-500"></i> التعديلات اليدوية على الكميات (جرد/تصحيح) بره إذونات الإضافة والصرف. التعديل الكبير (≥10 قطع و≥20% من الرصيد) بيتعلّم "مشتبه" للمراجعة.</div>
         <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <div class="card card-pad"><div class="kpi-label">عدد التعديلات</div><div class="mt-1 text-2xl font-bold tabular-nums" x-text="d.adjustments.summary.count"></div></div>
           <div class="card card-pad"><div class="kpi-label">مشتبه فيها</div><div class="mt-1 text-2xl font-bold tabular-nums text-amber-600" x-text="d.adjustments.summary.flagged_count"></div></div>
@@ -250,7 +250,7 @@
               <template x-for="a in d.adjustments.items" :key="a.id"><tr :class="a.flagged && 'bg-amber-500/5'"><td><div class="flex items-center gap-1.5"><i class="fa-solid fa-flag text-xs text-amber-500" x-show="a.flagged" title="مشتبه"></i><span class="font-medium" x-text="a.name"></span></div></td>
                 <td class="tabular-nums" x-text="num(a.old_quantity) + ' ← ' + num(a.new_quantity)"></td><td class="font-bold tabular-nums" :class="a.difference < 0 ? 'text-red-600' : 'text-brand-600'" x-text="(a.difference > 0 ? '+' : '') + num(a.difference)"></td>
                 <td class="tabular-nums" :class="a.value_impact < 0 ? 'text-red-600' : 'text-brand-600'" x-text="money(a.value_impact)"></td><td class="text-muted" x-text="a.user || '—'"></td>
-                <td class="max-w-[220px]"><div class="truncate text-xs" x-text="a.reason || '—'"></div><div class="text-xs text-muted" x-text="fmtDateTime(a.date)"></div></td></tr></template></tbody></table>
+                <td class="max-w-[220px]"><div class="truncate text-xs" x-text="a.reason || '—'" :title="a.reason || '—'"></div><div class="text-xs text-muted" x-text="fmtDateTime(a.date)"></div></td></tr></template></tbody></table>
               <p class="empty" x-show="!d.adjustments.items.length">مفيش تعديلات في الفترة دي.</p></div>
               <div class="border-t border-line px-4"><ui-pager :page="d.adjustments.page" :pages="d.adjustments.total_pages" :total="d.adjustments.total" :size="d.adjustments.page_size" @go="goPage('adjustments', $event.detail)"></ui-pager></div></div>
         </div>

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <meta name="robots" content="noindex, nofollow">
-  <title>تفاصيل الفاتورة | مخزني</title>
+  <title>تفاصيل المستند | مخزني</title>
   <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
   <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -16,19 +16,18 @@
 <body>
 <noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
 
-<div id="shell" data-perm="invoices.view" data-active="movements" data-title="تفاصيل الفاتورة">
+<div id="shell" data-perm="invoices.view" data-active="movements" data-title="تفاصيل المستند">
   <div x-data="invoice" class="mx-auto max-w-4xl space-y-5">
 
     <div class="no-print flex flex-wrap items-center justify-between gap-3">
       <a href="movements.html" class="btn btn-ghost"><i class="fa-solid fa-arrow-right"></i>رجوع للسجل</a>
       <div class="flex flex-wrap items-center gap-2" x-show="inv" x-cloak>
-        <template x-if="isHeld && canHeld">
-          <span class="flex flex-wrap items-center gap-2">
-            <button type="button" class="btn btn-primary" @click="complete()" :disabled="busy"><i class="fa-solid fa-circle-check"></i>إتمام الفاتورة</button>
-            <a :href="'stock-out.html#edit=' + id" class="btn btn-outline"><i class="fa-solid fa-pen"></i>تعديل</a>
-            <button type="button" class="btn btn-outline text-red-600" @click="remove()" :disabled="busy"><i class="fa-solid fa-trash-can"></i>مسح</button>
-          </span>
-        </template>
+        <button type="button" class="btn btn-primary" x-show="canDoReserve" @click="reserve()" :disabled="busy"><i class="fa-solid fa-lock"></i>حجز الكميات</button>
+        <button type="button" class="btn btn-primary" x-show="canDoComplete" @click="complete()" :disabled="busy"><i class="fa-solid fa-circle-check"></i>إتمام الصرف</button>
+        <button type="button" class="btn btn-outline" x-show="canDoRelease" @click="release()" :disabled="busy"><i class="fa-solid fa-lock-open"></i>فك الحجز</button>
+        <a :href="'stock-out.html#edit=' + id" class="btn btn-outline" x-show="canEdit"><i class="fa-solid fa-pen"></i>تعديل</a>
+        <button type="button" class="btn btn-outline" x-show="canRecreate" @click="recreate()" :disabled="busy"><i class="fa-solid fa-copy"></i>إعادة إنشاء كعرض سعر</button>
+        <button type="button" class="btn btn-outline text-red-600" x-show="canDoVoid" @click="openVoid()" :disabled="busy"><i class="fa-solid fa-ban"></i>إلغاء</button>
         <a x-show="canPrint" :href="'invoice-print.html#kind=' + kind + '&id=' + id" class="btn btn-outline"><i class="fa-solid fa-print"></i>طباعة</a>
       </div>
     </div>
@@ -37,19 +36,25 @@
     <div x-show="error" x-cloak class="card empty"><p class="mb-3 text-red-500" x-text="error"></p><button type="button" class="btn btn-outline btn-sm" @click="load()">إعادة المحاولة</button></div>
 
     <article x-show="inv" x-cloak class="card overflow-hidden">
-      <div class="h-1.5" :class="kind === 'in' ? 'bg-brand-500' : 'bg-orange-500'"></div>
+      <div class="h-1.5" :class="status === 'voided' ? 'bg-red-500' : (kind === 'in' ? 'bg-brand-500' : 'bg-orange-500')"></div>
+      <div class="border-b border-line bg-amber-500/10 px-6 py-2 text-sm font-medium text-amber-800 dark:text-amber-200" x-show="notice" x-cloak x-text="notice"></div>
+      <div class="border-b border-red-200 bg-red-500/10 px-6 py-3 text-sm text-red-700 dark:text-red-300" x-show="status === 'voided'" x-cloak>
+        <b>ملغاة</b> — <span x-text="inv && inv.voided_by_name ? 'بواسطة ' + inv.voided_by_name : ''"></span> <span x-text="inv && inv.voided_at ? '· ' + fmtDateTime(inv.voided_at) : ''"></span>
+        <div class="mt-1">السبب: <span x-text="inv && inv.void_reason"></span></div>
+      </div>
       <header class="flex flex-wrap items-start justify-between gap-4 p-6">
         <div class="flex items-center gap-4">
           <span class="grid h-14 w-14 place-items-center rounded-2xl text-2xl" :class="meta.tile"><i class="fa-solid" :class="meta.icon"></i></span>
-          <div><div class="text-sm text-muted" x-text="kind === 'in' ? 'فاتورة وارد' : 'فاتورة صادر'"></div>
-            <h1 class="flex items-center gap-2 text-2xl font-bold"><span x-text="'#' + (inv && inv.id)"></span><span x-show="isHeld" x-cloak class="badge badge-warn text-xs">معلّقة</span></h1></div>
+          <div><div class="text-sm text-muted" x-text="docTitle + (isOut ? ' — مستند مخزني غير ضريبي' : '')"></div>
+            <h1 class="flex items-center gap-2 text-2xl font-bold"><span x-text="'#' + (inv && inv.id)"></span><span class="badge text-xs" :class="docStatus(status).cls" x-text="docStatus(status).label"></span></h1>
+            <div class="mt-1 text-xs text-muted" x-show="inv && inv.copied_from_id" x-cloak>نسخة من المستند <a class="text-brand-600 hover:underline" :href="'invoice.html#kind=out&id=' + (inv && inv.copied_from_id)" @click="setTimeout(() => location.reload(), 0)" x-text="'#' + (inv && inv.copied_from_id)"></a></div></div>
         </div>
         <div class="text-end text-sm"><div class="text-muted">التاريخ</div><div class="font-medium" x-text="inv && fmtDateTime(inv.date)"></div></div>
       </header>
 
       <dl class="grid gap-4 border-y border-line bg-soft/60 p-6 sm:grid-cols-3">
         <div><dt class="kpi-label" x-text="kind === 'in' ? 'المورد' : 'الجهة المستلمة'"></dt><dd class="mt-1 font-medium" x-text="partyName || 'غير محدد'"></dd></div>
-        <div><dt class="kpi-label" x-text="kind === 'in' ? 'استلمها' : 'سلّمها'"></dt><dd class="mt-1 font-medium" x-text="userName || '—'"></dd></div>
+        <div><dt class="kpi-label" x-text="kind === 'in' ? 'استلمه' : 'أنشأه'"></dt><dd class="mt-1 font-medium" x-text="userName || '—'"></dd></div>
         <div><dt class="kpi-label">ملاحظات</dt><dd class="mt-1 text-sm" x-text="(inv && inv.notes) || '—'"></dd></div>
       </dl>
 
@@ -71,14 +76,30 @@
         <div class="text-sm text-muted"><span x-text="inv && inv.items.length"></span> صنف · إجمالي الكمية <b class="text-fg tabular-nums" x-text="num(totalQty)"></b></div>
         <div class="text-end">
           <dl class="mb-2 space-y-1 text-sm" x-show="hasAdj" x-cloak>
-            <div class="flex justify-between gap-8"><dt class="text-muted">الإجمالي الفرعي</dt><dd class="tabular-nums" x-text="inv && money(inv.subtotal)"></dd></div>
+            <div class="flex justify-between gap-8"><dt class="text-muted">إجمالي قيمة الأصناف قبل الخصم</dt><dd class="tabular-nums" x-text="inv && money(inv.subtotal)"></dd></div>
             <div class="flex justify-between gap-8" x-show="inv && inv.discount_amount > 0"><dt class="text-muted" x-text="adjLabel('الخصم', inv && inv.discount_type, inv && inv.discount_value)"></dt><dd class="tabular-nums" x-text="inv && money(inv.discount_amount)"></dd></div>
-            <div class="flex justify-between gap-8" x-show="inv && inv.tax_amount > 0"><dt class="text-muted" x-text="adjLabel('الضريبة', inv && inv.tax_type, inv && inv.tax_value)"></dt><dd class="tabular-nums" x-text="inv && money(inv.tax_amount)"></dd></div>
+            <div class="flex justify-between gap-8" x-show="inv && inv.discount_amount > 0"><dt class="text-muted">صافي قيمة الأصناف بعد الخصم</dt><dd class="tabular-nums" x-text="inv && money(inv.net_amount)"></dd></div>
+            <div class="flex justify-between gap-8" x-show="inv && inv.tax_amount > 0"><dt class="text-muted" x-text="adjLabel('الضريبة', 'percent', inv && inv.tax_value)"></dt><dd class="tabular-nums" x-text="inv && money(inv.tax_amount)"></dd></div>
           </dl>
-          <div class="kpi-label" x-text="hasAdj ? 'الإجمالي النهائي' : 'إجمالي الفاتورة'"></div><div class="text-2xl font-bold tabular-nums" x-text="inv && money(finalTotal)"></div>
+          <div class="kpi-label" x-text="hasAdj ? 'الإجمالي' : 'إجمالي قيمة الأصناف'"></div><div class="text-2xl font-bold tabular-nums" x-text="inv && money(finalTotal)"></div>
         </div>
       </footer>
     </article>
+
+    <!-- إلغاء مستند: السبب إلزامي -->
+    <div x-show="voidDlg.open" x-cloak x-transition.opacity class="modal no-print" role="dialog" aria-modal="true" @keydown.escape.window="voidDlg.open = false">
+      <div class="modal-backdrop" @click="voidDlg.open = false"></div>
+      <form class="modal-panel max-w-md" @submit.prevent="submitVoid()" novalidate>
+        <div class="modal-head"><h2 class="text-lg font-bold">إلغاء المستند</h2><button type="button" class="btn btn-ghost btn-icon btn-sm" @click="voidDlg.open = false" aria-label="إغلاق"><i class="fa-solid fa-xmark"></i></button></div>
+        <div class="modal-body space-y-4">
+          <p class="text-sm text-muted" x-text="status === 'completed' ? (kind === 'in' ? 'هتتعكس الإضافة من نفس الأماكن (لو الكميات اتصرفت أو اتنقلت أو اتحجزت الإلغاء هيترفض).' : 'الكميات هترجع لنفس أماكنها.') : (status === 'reserved' ? 'هيتفك الحجز وترجع الكميات متاحة.' : 'عرض السعر مش مؤثر على المخزون.')"></p>
+          <div><label class="label">سبب الإلغاء *</label><textarea class="input h-24 py-2" x-model="voidDlg.reason" maxlength="500" placeholder="اكتب السبب (3 حروف على الأقل)"></textarea></div>
+          <label class="flex items-center gap-2 text-sm" x-show="isOut && canQuote" x-cloak><input type="checkbox" class="accent-brand-500" x-model="voidDlg.recreate">إلغاء وإعادة إنشاء نسخة جديدة كعرض سعر</label>
+          <p class="field-err" x-show="voidDlg.error" x-text="voidDlg.error"></p>
+        </div>
+        <div class="modal-foot"><button type="button" class="btn btn-outline" @click="voidDlg.open = false">رجوع</button><button type="submit" class="btn btn-danger" :disabled="busy">تأكيد الإلغاء</button></div>
+      </form>
+    </div>
   </div>
 </div>
 

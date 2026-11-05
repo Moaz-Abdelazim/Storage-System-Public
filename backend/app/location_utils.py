@@ -219,7 +219,7 @@ def resolve_receiving_location(idx: LocationIndex, warehouse_id: Optional[int], 
     if location_id:
         return require_leaf_location(idx, location_id)
     if not warehouse_id:
-        raise HTTPException(status_code=400, detail="حدد المخزن (أو المكان) اللي هيدخله كل صنف في فاتورة الوارد")
+        raise HTTPException(status_code=400, detail="حدد المخزن (أو المكان) اللي هيدخله كل صنف في إذن الإضافة")
     wh = idx.warehouses.get(warehouse_id)
     if wh is None:
         raise HTTPException(status_code=404, detail="المخزن المختار مش موجود")

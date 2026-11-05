@@ -27,11 +27,13 @@ def _dev_local_ip() -> str:
 
 
 from . import auth
-from .services.inventory import InsufficientStock, InconsistentStock
+from .services.inventory import InsufficientStock, InconsistentStock, ReservationInvalid, BelowReserved
+from .services.audit import current_ip
+from .security import client_ip
 from . import observability
 from .database import engine
 from .routers import auth as auth_router, roles as roles_router
-from .routers import products, suppliers, recipients, stock, reports, excel_io, categories, brands, locations, location_nav, dashboard, analytics, executive_report, company, invoice_print
+from .routers import products, suppliers, recipients, stock, reports, excel_io, categories, brands, locations, location_nav, dashboard, analytics, executive_report, company, invoice_print, stocktake, setup, settings as settings_router, audit_log
 
 load_dotenv()
 
@@ -64,6 +66,16 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 @app.exception_handler(InsufficientStock)
 async def insufficient_stock_handler(request: Request, exc: InsufficientStock):
     return JSONResponse(status_code=400, content={"detail": exc.message})
+
+
+@app.exception_handler(ReservationInvalid)
+async def reservation_invalid_handler(request: Request, exc: ReservationInvalid):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(BelowReserved)
+async def below_reserved_handler(request: Request, exc: BelowReserved):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
 @app.exception_handler(InconsistentStock)
@@ -123,6 +135,7 @@ async def request_context_middleware(request: Request, call_next):
     started = time.perf_counter()
     rid = observability.new_request_id(request.headers.get("x-request-id"))
     request.state.request_id = rid
+    current_ip.set(client_ip(request))  # لسجل التدقيق (services/audit.py)
     response = await call_next(request)
     response.headers["X-Request-ID"] = rid
     if request.url.path.startswith("/api/"):
@@ -182,6 +195,10 @@ app.include_router(analytics.router)
 app.include_router(executive_report.router)
 app.include_router(company.router)
 app.include_router(invoice_print.router)
+app.include_router(stocktake.router)
+app.include_router(setup.router)
+app.include_router(settings_router.router)
+app.include_router(audit_log.router)
 
 @app.get("/api/health")
 def health_check():

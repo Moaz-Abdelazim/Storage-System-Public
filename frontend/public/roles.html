@@ -31,7 +31,7 @@
             <template x-if="loading && !rows.length"><template x-for="i in 4"><tr><td colspan="5"><div class="skeleton h-9"></div></td></tr></template></template>
             <template x-for="r in rows" :key="r.id">
               <tr>
-                <td><div class="font-medium" x-text="r.name"></div><div class="max-w-[320px] truncate text-xs text-muted" x-show="r.description" x-text="r.description"></div></td>
+                <td><div class="font-medium" x-text="r.name"></div><div class="max-w-[320px] truncate text-xs text-muted" x-show="r.description" x-text="r.description" :title="r.description"></div></td>
                 <td class="tabular-nums" x-text="r.users_count"></td>
                 <td><span class="badge" :class="r.is_system ? 'bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'badge-mute'" x-text="r.is_system ? 'كل الصلاحيات' : r.permissions.length + ' صلاحية'"></span></td>
                 <td><span class="badge" :class="r.is_active ? 'badge-ok' : 'badge-bad'" x-text="r.is_active ? 'فعّال' : 'موقوف'"></span></td>

@@ -33,18 +33,18 @@
     <section class="card">
       <div class="overflow-x-auto p-3">
         <table class="tbl">
-          <thead><tr><th>الاسم</th><th>الهاتف</th><th>العنوان</th><th>عدد الفواتير</th><th>إجمالي الكمية</th><th class="w-1"></th></tr></thead>
+          <thead><tr><th>الاسم</th><th>الهاتف</th><th>العنوان</th><th>عدد المستندات</th><th>إجمالي الكمية</th><th class="w-1"></th></tr></thead>
           <tbody>
             <template x-if="loading && !rows.length"><template x-for="i in 6"><tr><td colspan="6"><div class="skeleton h-7"></div></td></tr></template></template>
             <template x-for="r in rows" :key="r.id">
               <tr>
-                <td><button type="button" class="font-medium hover:text-brand-600" @click="openDetail(r)" x-text="r.name"></button><div class="max-w-[240px] truncate text-xs text-muted" x-show="r.notes" x-text="r.notes"></div></td>
+                <td><button type="button" class="font-medium hover:text-brand-600" @click="openDetail(r)" x-text="r.name"></button><div class="max-w-[240px] truncate text-xs text-muted" x-show="r.notes" x-text="r.notes" :title="r.notes"></div></td>
                 <td dir="ltr" class="text-end tabular-nums text-muted" x-text="r.phone || '—'"></td>
-                <td class="max-w-[220px] truncate text-muted" x-text="r.address || '—'"></td>
+                <td class="max-w-[220px] truncate text-muted" x-text="r.address || '—'" :title="r.address || '—'"></td>
                 <td><span class="badge badge-info" x-text="num(r.invoices_count)"></span></td>
                 <td class="tabular-nums" x-text="num(r.total_quantity)"></td>
                 <td><div class="flex items-center gap-0.5">
-                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="المنتجات والفواتير" @click="openDetail(r)"><i class="fa-regular fa-eye"></i></button>
+                  <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="المنتجات والمستندات" @click="openDetail(r)"><i class="fa-regular fa-eye"></i></button>
                   <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تعديل" x-show="canManage" @click="openForm(r)"><i class="fa-solid fa-pen"></i></button>
                   <template x-if="canDelete"><button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8 text-red-500" title="حذف" @click="remove(r)"><i class="fa-solid fa-trash-can"></i></button></template>
                 </div></td>
@@ -88,11 +88,11 @@
             <template x-for="p in detail.products.items" :key="p.product_id">
               <li>
                 <button type="button" class="flex w-full items-center justify-between gap-3 py-3 text-start" @click="toggleProduct(p)">
-                  <span class="min-w-0"><span class="block truncate font-medium" x-text="p.product_name"></span><span class="text-xs text-muted" x-text="(p.sku ? p.sku + ' · ' : '') + num(p.invoices_count) + ' فاتورة'"></span></span>
+                  <span class="min-w-0"><span class="block truncate font-medium" x-text="p.product_name" :title="p.product_name"></span><span class="text-xs text-muted" x-text="(p.sku ? p.sku + ' · ' : '') + num(p.invoices_count) + ' فاتورة'"></span></span>
                   <span class="flex items-center gap-3"><b class="tabular-nums" x-text="num(p.total_quantity)"></b><i class="fa-solid fa-chevron-down text-[10px] text-muted transition-transform" :class="detail.openId === p.product_id && 'rotate-180'"></i></span></button>
                 <div x-show="detail.openId === p.product_id" x-cloak class="mb-3 rounded-xl bg-soft p-2">
                   <div x-show="detail.invLoading" class="skeleton h-8"></div>
-                  <div class="overflow-x-auto" x-show="!detail.invLoading"><table class="tbl"><thead><tr><th>الفاتورة</th><th>التاريخ</th><th>الكمية</th><th>السعر</th><th>بواسطة</th></tr></thead>
+                  <div class="overflow-x-auto" x-show="!detail.invLoading"><table class="tbl"><thead><tr><th>المستند</th><th>التاريخ</th><th>الكمية</th><th>السعر</th><th>بواسطة</th></tr></thead>
                     <tbody><template x-for="v in detail.invoices.items" :key="v.invoice_id + '-' + v.date">
                       <tr><td><a :href="'invoice.html#kind=in&id=' + v.invoice_id" class="font-medium text-brand-600 hover:underline" x-text="'#' + v.invoice_id"></a></td><td class="text-muted" x-text="fmtDateTime(v.date)"></td>
                         <td class="tabular-nums" x-text="num(v.quantity)"></td><td class="tabular-nums" x-text="v.unit_price != null ? money(v.unit_price) : '—'"></td><td class="text-muted" x-text="v.user_name || '—'"></td></tr></template></tbody></table></div>

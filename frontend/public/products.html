@@ -84,8 +84,9 @@
                   <div class="text-xs text-muted" x-text="p.brand_name || ''"></div>
                 </td>
                 <td>
-                  <span class="font-bold tabular-nums" x-text="num(p.quantity)"></span>
+                  <span class="font-bold tabular-nums" x-text="num(p.quantity)" title="الكمية الفعلية"></span>
                   <span class="text-xs text-muted" x-text="p.unit"></span>
+                  <div x-show="p.reserved > 0" x-cloak class="text-xs text-amber-600" :title="'محجوز ' + num(p.reserved) + ' · متاح ' + num(p.available)"><i class="fa-solid fa-lock"></i> محجوز <span x-text="num(p.reserved)"></span> · متاح <b x-text="num(p.available)"></b></div>
                   <div x-show="p.unassigned_quantity > 0" class="text-xs text-amber-600" title="كمية من غير مكان تخزين"><i class="fa-solid fa-triangle-exclamation"></i> <span x-text="num(p.unassigned_quantity)"></span> بدون مكان</div>
                 </td>
                 <td class="tabular-nums" x-text="money(p.price)"></td>
@@ -209,14 +210,16 @@
         </div>
         <div class="modal-body">
           <div x-show="detail.tab === 'locations'">
-            <div class="mb-4 grid grid-cols-3 gap-3 text-center">
-              <div class="rounded-xl bg-soft p-3"><div class="kpi-label">الكمية الحالية</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="detail.product && num(detail.product.quantity)"></div></div>
+            <div class="mb-4 grid grid-cols-2 gap-3 text-center sm:grid-cols-3">
+              <div class="rounded-xl bg-soft p-3"><div class="kpi-label">الفعلي</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="detail.product && num(detail.product.quantity)"></div></div>
+              <div class="rounded-xl bg-soft p-3"><div class="kpi-label">المحجوز</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="detail.product && num(detail.product.reserved)"></div></div>
+              <div class="rounded-xl bg-soft p-3"><div class="kpi-label">المتاح</div><div class="mt-1 text-xl font-bold tabular-nums text-brand-600" x-text="detail.product && num(detail.product.available)"></div></div>
               <div class="rounded-xl bg-soft p-3"><div class="kpi-label">الحد الأدنى</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="detail.product && num(detail.product.min_quantity)"></div></div>
               <div class="rounded-xl bg-soft p-3"><div class="kpi-label">السعر</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="detail.product && money(detail.product.price)"></div></div>
             </div>
             <ul class="divide-y divide-line">
               <template x-for="l in (detail.product ? detail.product.locations : [])" :key="l.location_id">
-                <li class="flex items-center justify-between py-2.5 text-sm"><loc-code :code="l.full_code"></loc-code><span class="font-bold tabular-nums" x-text="num(l.quantity)"></span></li>
+                <li class="flex items-center justify-between py-2.5 text-sm"><loc-code :code="l.full_code"></loc-code><span class="text-end"><span class="font-bold tabular-nums" x-text="num(l.quantity)" title="الفعلي"></span><span class="block text-xs text-muted" x-show="l.reserved > 0" x-cloak x-text="'محجوز ' + num(l.reserved) + ' · متاح ' + num(l.available)"></span></span></li>
               </template>
             </ul>
             <p class="empty" x-show="detail.product && !detail.product.locations.length">المنتج ده مش متوزع على أماكن تخزين.</p>
@@ -225,7 +228,7 @@
             <div x-show="detail.tab === kind">
               <div x-show="detail.loading" class="space-y-2"><div class="skeleton h-8"></div><div class="skeleton h-8"></div><div class="skeleton h-8"></div></div>
               <div class="overflow-x-auto" x-show="!detail.loading && detail.mv.items.length">
-                <table class="tbl"><thead><tr><th>الفاتورة</th><th>التاريخ</th><th x-text="kind === 'in' ? 'المورد' : 'الجهة'"></th><th>الكمية</th><th>السعر</th><th>بواسطة</th></tr></thead>
+                <table class="tbl"><thead><tr><th>المستند</th><th>التاريخ</th><th x-text="kind === 'in' ? 'المورد' : 'الجهة'"></th><th>الكمية</th><th>السعر</th><th>بواسطة</th></tr></thead>
                   <tbody><template x-for="m in detail.mv.items" :key="kind + m.invoice_id + m.date">
                     <tr><td><a :href="'invoice.html#kind=' + kind + '&id=' + m.invoice_id" class="font-medium text-brand-600 hover:underline" x-text="'#' + m.invoice_id"></a></td>
                       <td class="text-muted" x-text="fmtDateTime(m.date)"></td><td x-text="m.party_name || '—'"></td>

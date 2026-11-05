@@ -103,7 +103,8 @@ def test_by_barcode_endpoint(admin, login):
     assert r.status_code == 200
     body = r.json()
     assert body["id"] == p["id"] and body["barcode"] == "BC-100"
-    assert body["locations"] == [{"location_id": loc["id"], "full_code": "W1-A1", "quantity": 7}]
+    assert body["locations"] == [{"location_id": loc["id"], "full_code": "W1-A1", "quantity": 7, "reserved": 0, "available": 7}]
+    assert body["reserved"] == 0 and body["available"] == 7
     sku_p = _create(admin, "بـ SKU", sku="S-77").json()
     assert admin.get("/api/products/by-barcode/S-77").json()["id"] == sku_p["id"]  # SKU كبديل
     assert admin.get("/api/products/by-barcode/nope").status_code == 404
@@ -158,7 +159,7 @@ def test_import_float_and_scientific_barcodes(admin):
     buf = io.BytesIO()
     pd.DataFrame([{"الاسم": "رقمي", "الباركود": 6221234567890}, {"الاسم": "علمي", "الباركود": "1.23E+12"}]).to_excel(buf, index=False)
     out = admin.post("/api/excel/products/import", files={"file": ("p.xlsx", buf.getvalue(), "application/octet-stream")}).json()
-    assert out["created"] == 1 and any("كنص" in e for e in out["errors"])
+    assert out["created"] == 1 and any("كنص" in e["message"] for e in out["errors"])
     assert _products(admin)["رقمي"]["barcode"] == "6221234567890"
 
 
@@ -167,12 +168,12 @@ def test_import_conflicts_and_duplicates(admin):
     _create(admin, "تاني", sku="S-2")
     # SKU بيطابق منتج "تاني" والباركود تابع لمنتج "موجود" => رفض الصف
     out = _import(admin, [{"الاسم": "تاني", "SKU": "S-2", "الباركود": "TAKEN-1"}])
-    assert out["updated"] == 0 and any("تابع لمنتج" in e for e in out["errors"])
+    assert out["updated"] == 0 and any("تابع لمنتج" in e["message"] for e in out["errors"])
     assert _products(admin)["تاني"]["barcode"] is None
     out = _import(admin, [{"الاسم": "ب", "الباركود": "DUP-9"}, {"الاسم": "ج", "الباركود": "dup-9"}])
-    assert out["created"] == 1 and any("منتجين مختلفين" in e for e in out["errors"])
+    assert out["created"] == 1 and any("منتجين مختلفين" in e["message"] for e in out["errors"])
     out = _import(admin, [{"الاسم": "د", "SKU": "TAKEN-1"}])
-    assert out["created"] == 0 and any("كباركود" in e for e in out["errors"])
+    assert out["created"] == 0 and any("كباركود" in e["message"] for e in out["errors"])
 
 
 def test_export_has_text_barcode_column_and_roundtrip_keeps_zeros(admin):

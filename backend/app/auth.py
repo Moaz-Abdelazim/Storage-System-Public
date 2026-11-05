@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from .database import get_db
 from . import models, permissions
+from .services import sessions as session_svc
+from .timezone_utils import now_cairo
 
 from .env import app_env, is_production
 
@@ -81,6 +83,17 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return token if isinstance(token, str) else token.decode("ascii")
 
 
+def _mark_expired(token: str, db: Session) -> None:
+    """توكن منتهي الصلاحية بتوقيع سليم: بنقفل جلسته (sid) كـ expired. أي فشل هنا مبيأثرش على رفض الطلب."""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], options={"verify_exp": False})
+        sid = payload.get("sid")
+        if isinstance(sid, int) and session_svc.expire_session(db, sid):
+            db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
+
 def _resolve_session(request: Request, bearer: Optional[str], db: Session) -> Tuple[models.User, models.LoginLog]:
     """
     بيتحقق من التوكن **وكمان** من إن الجلسة (login_log) لسه مفتوحة في قاعدة البيانات.
@@ -103,6 +116,9 @@ def _resolve_session(request: Request, bearer: Optional[str], db: Session) -> Tu
         session_id = payload.get("sid")
         if username is None or session_id is None:
             raise credentials_exception
+    except jwt.ExpiredSignatureError:
+        _mark_expired(token, db)  # التوقيع سليم بس الصلاحية خلصت: الجلسة بتتقفل كـ "منتهية" (مش تسجيل خروج)
+        raise credentials_exception
     except JWTError:
         raise credentials_exception
 
@@ -117,7 +133,12 @@ def _resolve_session(request: Request, bearer: Optional[str], db: Session) -> Tu
 
     session = db.query(models.LoginLog).filter(models.LoginLog.id == session_id).first()
     if session is None or session.logout_time is not None:
-        raise credentials_exception  # الجلسة دي مقفولة (خروج عادي أو إغلاق من الأدمن)
+        raise credentials_exception  # الجلسة دي مقفولة (خروج عادي أو إغلاق من الأدمن أو انتهاء صلاحية)
+    if session.expires_at is not None and session.expires_at <= now_cairo():
+        # توكن لسه صالح بس الجلسة المخزّنة انتهت (مثلًا اتغيّرت مدة التوكن): نقفلها كمنتهية ونرفض
+        if session_svc.expire_session(db, session.id):
+            db.commit()
+        raise credentials_exception
 
     request.state.permissions = permissions.user_permissions(user)
     return user, session

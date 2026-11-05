@@ -154,7 +154,7 @@ class UiSelect extends HTMLElement {
       this._options = await this._remote(this._search.value.trim());
       this._renderList();
     } catch (e) {
-      this._list.innerHTML = `<li class="px-3 py-6 text-center text-sm text-red-500">${e.message || "تعذّر البحث"}</li>`;
+      this._list.innerHTML = `<li class="px-3 py-6 text-center text-sm text-red-500">${escHtml(e.message || "تعذّر البحث")}</li>`;
     }
   }
 

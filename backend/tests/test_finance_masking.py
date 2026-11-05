@@ -174,17 +174,17 @@ def test_discount_and_tax_need_discount_permission(admin, login, data):
     assert r.status_code == 403 and "خصم" in r.json()["detail"]
     assert seller.post("/api/stock/out", json={"items": [item], "tax_type": "percent", "tax_value": 14}).status_code == 403
     assert seller.post("/api/stock/out", json={"items": [item], "discount_type": "percent", "discount_value": 0}).status_code == 200  # صفر = مفيش خصم
-    boss = login("seller2", ["stock_out.discount"])
+    boss = login("seller2", ["stock_out.create", "stock_out.discount"])
     assert boss.post("/api/stock/out", json={"items": [item], "discount_type": "percent", "discount_value": 10}).status_code == 200
 
 
-def test_held_invoice_edit_with_discount_needs_permission(admin, login, data):
+def test_quote_edit_with_discount_needs_permission(admin, login, data):
     item = {"product_id": data["p"]["id"], "quantity": 1, "location_id": data["a"]["id"]}
-    held = admin.post("/api/stock/out", json={"items": [item], "status": "held"}).json()
-    mgr = login("holder1", ["stock_out.manage_held"])
-    assert mgr.put(f"/api/stock/out/{held['id']}", json={"items": [item], "discount_type": "amount", "discount_value": 1}).status_code == 403
-    assert mgr.put(f"/api/stock/out/{held['id']}", json={"items": [item]}).status_code == 200
-    assert mgr.post(f"/api/stock/out/{held['id']}/complete").status_code == 200
+    quote = admin.post("/api/stock/out", json={"items": [item], "status": "quote"}).json()
+    mgr = login("holder1", ["stock_out.quote"])
+    assert mgr.put(f"/api/stock/out/{quote['id']}", json={"items": [item], "discount_type": "amount", "discount_value": 1}).status_code == 403
+    assert mgr.put(f"/api/stock/out/{quote['id']}", json={"items": [item]}).status_code == 200
+    assert mgr.post(f"/api/stock/out/{quote['id']}/reserve").status_code == 403  # الحجز محتاج stock_out.reserve
 
 
 def _xlsx(rows):
@@ -202,7 +202,7 @@ def test_import_without_adjust_rejects_quantity_rows(admin, login, data):
     r = _import(c, [{"الاسم": "جديد1", "السعر": 3}, {"الاسم": "بكمية", "السعر": 3, "الموقع": "W1-A1", "الكمية": 4}])
     body = r.json()
     assert r.status_code == 200 and body["created"] == 1
-    assert any("صلاحية تعديل الكميات" in e for e in body["errors"])
+    assert any("صلاحية تعديل الكميات" in e["message"] for e in body["errors"])
     full = login("imp2", ["products.import", "products.adjust", "products.price"])
     ok = _import(full, [{"الاسم": "بكمية", "السعر": 3, "الموقع": "W1-A1", "الكمية": 4}]).json()
     assert ok["created"] == 1 and ok["errors"] == []
@@ -212,7 +212,7 @@ def test_import_without_price_permission_rejects_price_change(admin, login, data
     pid = data["p"]["id"]
     c = login("imp3", ["products.import"])
     body = _import(c, [{"ID": pid, "الاسم": "صنف", "السعر": 99}]).json()
-    assert body["updated"] == 0 and any("سعر" in e for e in body["errors"])
+    assert body["updated"] == 0 and any("سعر" in e["message"] for e in body["errors"])
     assert get_product(admin, pid)["price"] == 10
     same = _import(c, [{"ID": pid, "الاسم": "صنف", "السعر": 10}]).json()
     assert same["updated"] == 1

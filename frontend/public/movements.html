@@ -20,19 +20,24 @@
   <div x-data="movements" class="space-y-5">
 
     <div class="flex flex-wrap items-center justify-between gap-3">
-      <div><h1 class="text-2xl font-bold">سجل الحركات</h1><p class="mt-1 text-sm text-muted">كل فواتير الوارد والصادر وحركات النقل في مكان واحد</p></div>
+      <div><h1 class="text-2xl font-bold">سجل الحركات</h1><p class="mt-1 text-sm text-muted" x-text="view === 'docs' ? 'كل إذونات الإضافة والصرف بكل حالاتها (عرض سعر، محجوزة، تمت، ملغاة)' : 'الحركة الفعلية: إذونات الإضافة والصرف المكتملة وحركات النقل'"></p></div>
       <div class="flex flex-wrap gap-2">
         <button type="button" class="btn btn-outline" @click="exportExcel()" :disabled="exporting"><i class="fa-solid fa-file-excel text-green-600"></i>تصدير Excel</button>
         <a href="stock-in.html" class="btn btn-primary"><i class="fa-solid fa-arrow-down"></i>وارد</a>
-        <a href="stock-out.html" class="btn bg-orange-500 text-white hover:bg-orange-600"><i class="fa-solid fa-arrow-up"></i>صادر</a>
+        <a href="stock-out.html" class="btn bg-orange-500 text-white hover:bg-orange-600"><i class="fa-solid fa-arrow-up"></i>صرف</a>
       </div>
     </div>
 
-    <div class="grid gap-4 sm:grid-cols-3">
+    <div class="seg" role="tablist" aria-label="وضع العرض" x-show="canDocs" x-cloak>
+      <button type="button" class="seg-btn" :class="view === 'log' && 'seg-btn-on'" @click="setView('log')">الحركة الفعلية</button>
+      <button type="button" class="seg-btn" :class="view === 'docs' && 'seg-btn-on'" @click="setView('docs')">المستندات (كل الحالات)</button>
+    </div>
+
+    <div class="grid gap-4 sm:grid-cols-3" x-show="view === 'log'">
       <div class="card card-pad flex items-center gap-4"><span class="grid h-12 w-12 place-items-center rounded-2xl bg-brand-500/10 text-xl text-brand-600"><i class="fa-solid fa-arrow-down"></i></span>
-        <div><div class="kpi-label">فواتير الوارد</div><div class="text-2xl font-bold tabular-nums" x-text="totals ? num(totals.in_invoices_count) : '—'"></div><div class="text-xs text-muted" x-text="totals ? money(totals.in_total_value) : ''"></div></div></div>
+        <div><div class="kpi-label">إذونات الإضافة (مكتملة)</div><div class="text-2xl font-bold tabular-nums" x-text="totals ? num(totals.in_invoices_count) : '—'"></div><div class="text-xs text-muted" x-text="totals ? money(totals.in_total_value) : ''"></div></div></div>
       <div class="card card-pad flex items-center gap-4"><span class="grid h-12 w-12 place-items-center rounded-2xl bg-orange-500/10 text-xl text-orange-600"><i class="fa-solid fa-arrow-up"></i></span>
-        <div><div class="kpi-label">فواتير الصادر</div><div class="text-2xl font-bold tabular-nums" x-text="totals ? num(totals.out_invoices_count) : '—'"></div><div class="text-xs text-muted" x-text="totals ? money(totals.out_total_value) : ''"></div></div></div>
+        <div><div class="kpi-label">إذونات الصرف (مكتملة)</div><div class="text-2xl font-bold tabular-nums" x-text="totals ? num(totals.out_invoices_count) : '—'"></div><div class="text-xs text-muted" x-text="totals ? 'قبل الخصم ' + money(totals.out_total_value) : ''"></div><div class="text-xs text-muted" x-show="totals && totals.out_discount_total > 0" x-text="totals ? 'الصافي بعد الخصم ' + money(totals.out_net_value) : ''"></div></div></div>
       <div class="card card-pad flex items-center gap-4"><span class="grid h-12 w-12 place-items-center rounded-2xl bg-blue-500/10 text-xl text-blue-600"><i class="fa-solid fa-right-left"></i></span>
         <div><div class="kpi-label">حركات النقل</div><div class="text-2xl font-bold tabular-nums" x-text="totals ? num(totals.transfers_count) : '—'"></div><div class="text-xs text-muted" x-text="totals ? num(totals.transfers_quantity) + ' قطعة' : ''"></div></div></div>
     </div>
@@ -40,7 +45,7 @@
     <section class="card card-pad">
       <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-12">
         <div class="seg xl:col-span-4 xl:justify-self-start" role="tablist" aria-label="نوع الحركة">
-          <template x-for="k in kinds" :key="k.key"><button type="button" class="seg-btn" :class="f.kind === k.key && 'seg-btn-on'" @click="f.kind = k.key; apply()" x-text="k.label"></button></template>
+          <template x-for="k in (view === 'docs' ? docKinds : kinds)" :key="k.key"><button type="button" class="seg-btn" :class="f.kind === k.key && 'seg-btn-on'" @click="f.kind = k.key; apply()" x-text="k.label"></button></template>
         </div>
         <div class="flex items-center gap-2 md:col-span-2 xl:col-span-4">
           <input type="date" class="input" x-model="f.date_from" @change="apply()" aria-label="من تاريخ"><span class="text-muted">←</span><input type="date" class="input" x-model="f.date_to" @change="apply()" aria-label="إلى تاريخ">
@@ -49,7 +54,11 @@
           <input type="search" class="input ps-10" placeholder="المورد / الجهة..." x-model="f.party" @input.debounce.350ms="apply()" aria-label="بحث بالجهة"></div>
         <div class="xl:col-span-2"><ui-select source="usernames" placeholder="كل المستخدمين" clearable @pick="f.user = $event.detail.value || ''; apply()"></ui-select></div>
       </div>
-      <div class="mt-3 flex flex-wrap gap-2 text-xs">
+      <div class="mt-3 flex flex-wrap items-center gap-2 text-xs" x-show="view === 'docs'" x-cloak>
+        <template x-for="s in docStatuses" :key="s.key"><button type="button" class="badge cursor-pointer" :class="f.status === s.key ? 'badge-ok' : 'badge-mute hover:bg-line'" @click="f.status = s.key; apply()" x-text="s.label"></button></template>
+      </div>
+      <label class="mt-3 flex items-center gap-2 text-xs text-muted" x-show="view === 'log'"><input type="checkbox" class="accent-brand-500" x-model="f.voided" @change="apply()">إظهار المستندات الملغاة (بعلامة، ومش داخلة في الإجماليات)</label>
+      <div class="mt-3 flex flex-wrap gap-2 text-xs" x-show="view === 'log'">
         <template x-for="p in presets" :key="p.label"><button type="button" class="badge badge-mute cursor-pointer hover:bg-line" @click="preset(p.days)" x-text="p.label"></button></template>
       </div>
     </section>
@@ -63,7 +72,7 @@
             <template x-for="r in rows" :key="r.key">
               <tr :class="loading && 'opacity-60'">
                 <td><span class="inline-flex items-center gap-2.5"><span class="grid h-8 w-8 place-items-center rounded-lg" :class="r.meta.tile"><i class="fa-solid text-xs" :class="r.meta.icon"></i></span><span class="font-medium" x-text="r.meta.label"></span></span></td>
-                <td><a :href="r.href" class="font-medium hover:text-brand-600 hover:underline" x-text="r.ref"></a><span x-show="r.held" x-cloak class="badge badge-warn ms-2 text-[11px]">معلّقة</span><div class="max-w-[220px] truncate text-xs text-muted" x-text="r.sub"></div></td>
+                <td><a :href="r.href" class="font-medium hover:text-brand-600 hover:underline" x-text="r.ref"></a><span x-show="r.status && r.kind !== 'transfer' && (view === 'docs' || r.status !== 'completed')" x-cloak class="badge ms-2 text-[11px]" :class="docStatus(r.status).cls" x-text="docStatus(r.status).label"></span><div class="max-w-[220px] truncate text-xs text-muted" x-text="r.sub" :title="r.sub"></div></td>
                 <td><template x-if="r.kind === 'transfer'"><span class="inline-flex items-center gap-1.5"><loc-code :code="r.from"></loc-code><i class="fa-solid fa-arrow-left text-[10px] text-muted"></i><loc-code :code="r.to"></loc-code></span></template>
                   <template x-if="r.kind !== 'transfer'"><span x-text="r.party || '—'"></span></template></td>
                 <td class="text-muted" x-text="r.user || '—'"></td><td class="text-muted" x-text="r.date"></td>

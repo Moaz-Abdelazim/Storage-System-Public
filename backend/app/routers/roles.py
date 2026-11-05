@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session, selectinload
 
 from .. import auth, models, permissions, schemas
 from ..database import get_db
+from ..services import sessions as session_svc
+from ..services.audit import audit
 from ..services.roles import role_name_exists
 from ..timezone_utils import now_cairo
 
@@ -61,6 +63,8 @@ def create_role(payload: schemas.RoleIn, db: Session = Depends(get_db), admin: m
     role = models.Role(name=payload.name, description=payload.description, is_active=True, is_system=False)
     role.permissions = [models.RolePermission(permission=k) for k in keys]
     db.add(role)
+    db.flush()
+    audit(db, admin, "role", role.id, "create", {"name": role.name, "permissions": sorted(keys)})
     db.commit()
     db.refresh(role)
     return _role_out(role, 0)
@@ -74,6 +78,9 @@ def update_role(role_id: int, payload: schemas.RoleIn, db: Session = Depends(get
     keys = _validated(payload)
     if role_name_exists(db, payload.name, exclude_id=role.id):
         raise HTTPException(status_code=400, detail="في دور بنفس الاسم ده بالفعل")
+    before = sorted(rp.permission for rp in role.permissions)
+    audit(db, admin, "role", role.id, "update", {"name": {"old": role.name, "new": payload.name},
+          "added": sorted(set(keys) - set(before)), "removed": sorted(set(before) - set(keys))})
     role.name = payload.name
     role.description = payload.description
     role.permissions = [models.RolePermission(permission=k) for k in keys]  # الصلاحيات بتتحمّل كل request فبتسري فورًا
@@ -89,14 +96,13 @@ def set_role_active(role_id: int, payload: schemas.RoleActiveSet, db: Session = 
     if role.is_system:
         raise HTTPException(status_code=400, detail=_SYSTEM_MSG)
     role.is_active = payload.is_active
+    audit(db, admin, "role", role.id, "activate" if payload.is_active else "deactivate", {"name": role.name})
     role.updated_at = now_cairo()
     if not payload.is_active:
         # كل مستخدمي الدور بيفقدوا الدخول، وجلساتهم المفتوحة بتتقفل فورًا
         user_ids = [uid for (uid,) in db.query(models.User.id).filter(models.User.role_id == role.id).all()]
         if user_ids:
-            db.query(models.LoginLog).filter(
-                models.LoginLog.user_id.in_(user_ids), models.LoginLog.logout_time.is_(None)
-            ).update({"logout_time": now_cairo(), "closed_by_id": admin.id}, synchronize_session=False)
+            session_svc.close_open_sessions(db, models.LoginLog.user_id.in_(user_ids), reason="revoked", closed_by_id=admin.id)
     db.commit()
     db.refresh(role)
     return _role_out(role, _users_count(db, role.id))
@@ -110,6 +116,7 @@ def delete_role(role_id: int, db: Session = Depends(get_db), admin: models.User 
     count = _users_count(db, role.id)
     if count:
         raise HTTPException(status_code=409, detail=f"مينفعش تمسح الدور ده: عليه {count} مستخدم. غيّر دورهم الأول.")
+    audit(db, admin, "role", role.id, "delete", {"name": role.name})
     db.delete(role)
     db.commit()
     return {"message": "تم حذف الدور"}

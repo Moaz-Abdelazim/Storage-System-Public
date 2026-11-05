@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>الإعداد الأول | مخزني</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="js/theme-init.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+</head>
+<body>
+<noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
+
+<main x-data="setup" class="flex min-h-screen items-center justify-center p-4 sm:p-6">
+  <div class="w-full max-w-xl">
+    <div class="mb-6 flex items-center justify-between gap-3">
+      <div><div class="text-3xl font-bold leading-none">مخزني</div><div class="mt-1 text-xs text-muted">الإعداد الأول للنظام</div></div>
+      <button type="button" class="btn btn-ghost btn-icon" @click="toggleTheme($el)" aria-label="تبديل الوضع الليلي"><i class="fa-solid fa-circle-half-stroke"></i></button>
+    </div>
+
+    <div class="card card-pad" x-show="checking"><div class="skeleton h-40"></div></div>
+
+    <form class="card card-pad space-y-6" x-show="!checking" x-cloak @submit.prevent="submit()" novalidate>
+      <div><h1 class="text-xl font-bold">أهلاً بيك 👋</h1><p class="mt-1 text-sm text-muted">دي أول مرة النظام بيشتغل: أنشئ حساب مدير النظام وأول مخزن. الصفحة دي بتتقفل تلقائيًا بعد الإعداد.</p></div>
+
+      <fieldset class="space-y-4">
+        <legend class="mb-1 text-sm font-bold text-brand-600">حساب مدير النظام</legend>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div><label class="label" for="su">اسم المستخدم *</label><input id="su" class="input" dir="ltr" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="50" x-model.trim="f.username" :disabled="loading"></div>
+          <div><label class="label" for="sn">الاسم (اختياري)</label><input id="sn" class="input" maxlength="100" x-model.trim="f.full_name" :disabled="loading"></div>
+          <div><label class="label" for="sp">كلمة المرور *</label>
+            <div class="relative"><input id="sp" class="input pe-10" :type="show ? 'text' : 'password'" autocomplete="new-password" maxlength="128" x-model="f.password" :disabled="loading">
+              <button type="button" class="absolute end-1.5 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg text-muted hover:bg-soft" @click="show = !show" :aria-label="show ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'"><i class="fa-regular text-sm" :class="show ? 'fa-eye-slash' : 'fa-eye'"></i></button></div></div>
+          <div><label class="label" for="sp2">تأكيد كلمة المرور *</label><input id="sp2" class="input" :type="show ? 'text' : 'password'" autocomplete="new-password" maxlength="128" x-model="f.password2" :disabled="loading"></div>
+        </div>
+        <p class="text-xs text-muted">كلمة المرور 8 حروف على الأقل (وأقصاها 72 بايت) ومتكونش من الكلمات الشائعة زي password أو 12345678.</p>
+      </fieldset>
+
+      <fieldset class="space-y-4">
+        <legend class="mb-1 text-sm font-bold text-brand-600">الشركة وأول مخزن</legend>
+        <div><label class="label" for="sc">اسم الشركة (اختياري - بيظهر في المستندات المطبوعة)</label><input id="sc" class="input" maxlength="150" x-model.trim="f.company_name" :disabled="loading"></div>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div><label class="label" for="wn">اسم المخزن *</label><input id="wn" class="input" maxlength="100" x-model.trim="f.warehouse_name" :disabled="loading"></div>
+          <div><label class="label" for="wc">كود المخزن *</label><input id="wc" class="input" dir="ltr" maxlength="30" placeholder="MAIN" x-model.trim="f.warehouse_code" :disabled="loading"></div>
+        </div>
+        <label class="flex items-center gap-2 text-sm"><input type="checkbox" class="accent-brand-500" x-model="f.create_receiving_location" :disabled="loading">إنشاء مكان استلام افتراضي للمخزن (RCV) تدخله البضاعة الواردة</label>
+      </fieldset>
+
+      <div x-show="error" x-cloak role="alert" class="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800 dark:border-red-500/30 dark:bg-red-950/50 dark:text-red-200"><i class="fa-solid fa-circle-exclamation mt-0.5"></i><span x-text="error"></span></div>
+
+      <button type="submit" class="btn btn-primary h-11 w-full text-[15px]" :disabled="loading"><i class="fa-solid fa-spinner animate-spin" x-show="loading" x-cloak></i><span x-text="loading ? 'جاري الإعداد...' : 'إنهاء الإعداد والدخول'"></span></button>
+    </form>
+  </div>
+</main>
+
+<script type="module" src="js/setup.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
+</body>
+</html>

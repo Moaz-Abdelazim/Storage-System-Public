@@ -14,6 +14,8 @@ from ..database import get_db
 from ..display_utils import format_user_display
 from ..security import client_ip, login_limiter
 from ..query_helpers import contains, page_args, paged
+from ..services import sessions as session_svc
+from ..services.audit import audit
 from ..rate_limit import limit_per_user
 from ..services.roles import role_name_exists  # noqa: F401
 
@@ -100,13 +102,16 @@ def login(payload: schemas.LoginRequest, request: Request, response: Response, d
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="الدور بتاعك موقوف، كلّم الأدمن")
 
     login_limiter.clear(db, ip, username.lower())
+    session_svc.expire_stale_sessions(db)  # جلسات عدّى وقتها بتتقفل كمنتهية (مش تفضل "مفتوحة")
 
     # الجلسة (login_log) بتتعمل الأول عشان ناخد الـ id بتاعها ونحطه جوه التوكن نفسه (sid) -
     # ده اللي بيخلي أي إغلاق للجلسة دي (من المستخدم أو من الأدمن) يبطل التوكن فورًا
+    now = now_cairo()
     log = models.LoginLog(
         user_id=user.id,
         username=user.username,
-        login_time=now_cairo(),
+        login_time=now,
+        expires_at=session_svc.expiry_for(now, auth.ACCESS_TOKEN_EXPIRE_MINUTES),  # نفس مدة التوكن
         ip_address=ip,
     )
     db.add(log)
@@ -129,6 +134,7 @@ def logout(
 ):
     _user, session = result
     session.logout_time = now_cairo()
+    session.end_reason = "logout"  # خروج يدوي فعلي (الانتهاء التلقائي end_reason=expired)
     db.commit()
     auth.clear_session_cookie(response)
     return {"message": "تم تسجيل الخروج"}
@@ -153,9 +159,7 @@ def change_password(
     if payload.new_password == payload.current_password:
         raise HTTPException(status_code=400, detail="كلمة المرور الجديدة لازم تختلف عن الحالية")
     user.password_hash = auth.get_password_hash(payload.new_password)
-    db.query(models.LoginLog).filter(
-        models.LoginLog.user_id == user.id, models.LoginLog.logout_time.is_(None), models.LoginLog.id != session.id
-    ).update({"logout_time": now_cairo()}, synchronize_session=False)
+    session_svc.close_open_sessions(db, models.LoginLog.user_id == user.id, models.LoginLog.id != session.id, reason="system")
     db.commit()
     return {"message": "تم تغيير كلمة المرور"}
 
@@ -189,6 +193,8 @@ def create_user(
         role_id=role.id,
     )
     db.add(user)
+    db.flush()
+    audit(db, actor, "user", user.id, "create", {"username": user.username, "role": role.name})
     db.commit()
     db.refresh(user)
     return _user_out(user)
@@ -273,6 +279,9 @@ def update_user(
     _forbid_touching_admin(actor, user)
 
     data = payload.model_dump(exclude_unset=True)
+    audit_changes = {k: v for k, v in data.items() if k not in ("password", "role_id") and v is not None}
+    if data.get("password"):
+        audit_changes["password"] = "changed"
     is_self = user.id == actor.id
     if is_self and not actor.is_admin and data.get("role_id") not in (None, user.role_id):
         raise HTTPException(status_code=403, detail="مينفعش تغيّر دورك بنفسك")
@@ -297,33 +306,29 @@ def update_user(
             raise HTTPException(status_code=400, detail="اسم المستخدم ده مستخدم بالفعل")
         if new_username != user.username:
             # الاسم جزء من التوكن، فتغييره بيقفل الجلسات المفتوحة للمستخدم ده بدل ما تفضل معلّقة
-            db.query(models.LoginLog).filter(
-                models.LoginLog.user_id == user.id, models.LoginLog.logout_time.is_(None)
-            ).update({"logout_time": now_cairo(), "closed_by_id": actor.id}, synchronize_session=False)
+            session_svc.close_open_sessions(db, models.LoginLog.user_id == user.id, reason="revoked", closed_by_id=actor.id)
         user.username = new_username
 
     if "full_name" in data:
         user.full_name = data["full_name"]
 
     if new_role is not None:
+        audit_changes["role"] = {"old": user.role.name if user.role else None, "new": new_role.name}
         user.role_id = new_role.id  # الصلاحيات بتتحمّل كل request فالتغيير بيسري فورًا من غير ما نقفل الجلسات
 
     if "is_active" in data and data["is_active"] is not None:
         user.is_active = data["is_active"]
         if data["is_active"] is False:
             # لو الأدمن وقف الحساب، اقفل أي جلسات مفتوحة ليه فورًا (مش بس تمنع دخول جديد)
-            db.query(models.LoginLog).filter(
-                models.LoginLog.user_id == user.id, models.LoginLog.logout_time.is_(None)
-            ).update({"logout_time": now_cairo(), "closed_by_id": actor.id}, synchronize_session=False)
+            session_svc.close_open_sessions(db, models.LoginLog.user_id == user.id, reason="revoked", closed_by_id=actor.id)
 
     if "password" in data and data["password"]:
         user.password_hash = auth.get_password_hash(data["password"])
         # تغيير الباسورد بيقفل كل الجلسات المفتوحة للمستخدم ده (ما عدا الجلسة الحالية لو بيغيّر باسورده هو)
-        others = db.query(models.LoginLog).filter(models.LoginLog.user_id == user.id, models.LoginLog.logout_time.is_(None))
-        if user.id == actor.id:
-            others = others.filter(models.LoginLog.id != current_session.id)
-        others.update({"logout_time": now_cairo(), "closed_by_id": actor.id}, synchronize_session=False)
+        extra = [models.LoginLog.id != current_session.id] if user.id == actor.id else []
+        session_svc.close_open_sessions(db, models.LoginLog.user_id == user.id, *extra, reason="revoked", closed_by_id=actor.id)
 
+    audit(db, actor, "user", user.id, "update", audit_changes)
     db.commit()
     db.refresh(user)
     return _user_out(user)
@@ -349,11 +354,17 @@ def delete_user(
     # بس هيتوضح جنبه إن الحساب اتمسح
     db.query(models.StockInInvoice).filter(models.StockInInvoice.received_by_id == user_id).update({"received_by_id": None})
     db.query(models.StockOutInvoice).filter(models.StockOutInvoice.delivered_by_id == user_id).update({"delivered_by_id": None})
+    db.query(models.StockInInvoice).filter(models.StockInInvoice.voided_by_id == user_id).update({"voided_by_id": None})
+    db.query(models.StockOutInvoice).filter(models.StockOutInvoice.voided_by_id == user_id).update({"voided_by_id": None})
+    db.query(models.Stocktake).filter(models.Stocktake.created_by_id == user_id).update({"created_by_id": None})
+    db.query(models.Stocktake).filter(models.Stocktake.approved_by_id == user_id).update({"approved_by_id": None})
     db.query(models.QuantityAdjustment).filter(models.QuantityAdjustment.changed_by_id == user_id).update({"changed_by_id": None})
     db.query(models.LocationTransfer).filter(models.LocationTransfer.moved_by_id == user_id).update({"moved_by_id": None})
     db.query(models.LoginLog).filter(models.LoginLog.closed_by_id == user_id).update({"closed_by_id": None})
-    db.query(models.LoginLog).filter(models.LoginLog.user_id == user_id).update({"user_id": None, "logout_time": now_cairo()})
+    session_svc.close_open_sessions(db, models.LoginLog.user_id == user_id, reason="system")  # المفتوحة بس (مبنكتبش فوق وقت خروج قديم)
+    db.query(models.LoginLog).filter(models.LoginLog.user_id == user_id).update({"user_id": None})
 
+    audit(db, actor, "user", user_id, "delete", {"username": user.username})
     db.delete(user)
     db.commit()
     return {"message": "تم حذف المستخدم"}
@@ -378,51 +389,68 @@ def login_logs(
     page = max(1, page)
     page_size = 15 if page_size <= 0 else min(page_size, 100)
 
-    q = db.query(models.LoginLog)
+    L = models.LoginLog
+    now = now_cairo()
+    session_svc.expire_stale_sessions(db, now)  # تحديث آمن (UPDATE شرطي) للجلسات اللي عدّى وقتها قبل العرض
+    db.commit()
+
+    q = db.query(L)
     if user and user.strip():
         # بنبحث في الاسم وقت الدخول (النسخة المحفوظة) وفي الاسم الحالي للحساب (لو اتغيّر بعدين)
         like = f"%{_escape_like(user.strip())}%"
-        q = q.outerjoin(models.User, models.User.id == models.LoginLog.user_id).filter(
-            or_(models.LoginLog.username.like(like, escape="\\"), models.User.username.like(like, escape="\\"))
+        q = q.outerjoin(models.User, models.User.id == L.user_id).filter(
+            or_(L.username.like(like, escape="\\"), models.User.username.like(like, escape="\\"))
         )
     if ip and ip.strip():
-        q = q.filter(models.LoginLog.ip_address.like(f"%{_escape_like(ip.strip())}%", escape="\\"))
+        q = q.filter(L.ip_address.like(f"%{_escape_like(ip.strip())}%", escape="\\"))
+    # الحالة بتتحسب من end_reason/expires_at مش من logout_time بس
     if status == "active":
-        q = q.filter(models.LoginLog.logout_time.is_(None))
-    elif status == "closed":
-        q = q.filter(models.LoginLog.logout_time.isnot(None))
+        q = q.filter(L.logout_time.is_(None), or_(L.expires_at.is_(None), L.expires_at > now))
+    elif status == "expired":
+        q = q.filter(or_(L.end_reason == "expired", (L.logout_time.is_(None)) & (L.expires_at <= now)))
+    elif status == "logged_out":
+        q = q.filter(L.logout_time.isnot(None), or_(L.end_reason == "logout", (L.end_reason.is_(None)) & (L.closed_by_id.is_(None))))
+    elif status == "revoked":
+        q = q.filter(L.logout_time.isnot(None), or_(L.end_reason == "revoked", (L.end_reason.is_(None)) & (L.closed_by_id.isnot(None))))
+    elif status == "closed":  # أي حاجة اتقفلت يدويًا/من النظام (غير المنتهية تلقائيًا)
+        q = q.filter(L.logout_time.isnot(None), or_(L.end_reason.is_(None), L.end_reason != "expired"))
     elif status not in (None, ""):
-        raise HTTPException(status_code=400, detail="قيمة الحالة لازم تكون active أو closed")
+        raise HTTPException(status_code=400, detail="قيمة الحالة لازم تكون active أو expired أو logged_out أو revoked أو closed")
     try:
         if date_from:
-            q = q.filter(models.LoginLog.login_time >= datetime.fromisoformat(date_from))
+            q = q.filter(L.login_time >= datetime.fromisoformat(date_from))
         if date_to:
             end = datetime.fromisoformat(date_to)
-            q = q.filter(models.LoginLog.login_time < (end + timedelta(days=1) if len(date_to) <= 10 else end))
+            q = q.filter(L.login_time < (end + timedelta(days=1) if len(date_to) <= 10 else end))
     except ValueError:
         raise HTTPException(status_code=400, detail="صيغة التاريخ غير صحيحة")
 
     total = q.count()
     rows = (
-        q.options(joinedload(models.LoginLog.user), joinedload(models.LoginLog.closed_by))
-        .order_by(models.LoginLog.login_time.desc(), models.LoginLog.id.desc())
+        q.options(joinedload(L.user), joinedload(L.closed_by))
+        .order_by(L.login_time.desc(), L.id.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
     )
+    items = []
+    for l in rows:
+        st = session_svc.session_status(l, now)
+        items.append({
+            "id": l.id,
+            "username": format_user_display(l.user, l.username),
+            "login_time": l.login_time,
+            "expires_at": l.expires_at,
+            "logout_time": l.logout_time,
+            "ended_at": session_svc.ended_at(l, now),  # وقت الخروج/الإنهاء أو وقت انتهاء الصلاحية
+            "ip_address": l.ip_address,
+            "status": st,  # active / expired / logged_out / revoked / system
+            "end_reason": l.end_reason,
+            "is_active": st == "active",
+            "closed_by": l.closed_by.username if l.closed_by else None,
+        })
     return {
-        "items": [
-            {
-                "id": l.id,
-                "username": format_user_display(l.user, l.username),
-                "login_time": l.login_time,
-                "logout_time": l.logout_time,
-                "ip_address": l.ip_address,
-                "is_active": l.logout_time is None,
-                "closed_by": l.closed_by.username if l.closed_by else None,
-            }
-            for l in rows
-        ],
+        "items": items,
         "total": total,
         "page": page,
         "page_size": page_size,
@@ -440,9 +468,14 @@ def revoke_session(
     session = db.query(models.LoginLog).filter(models.LoginLog.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="الجلسة مش موجودة")
+    session_svc.expire_stale_sessions(db)
+    db.refresh(session)
     if session.logout_time is not None:
-        return {"message": "الجلسة دي مقفولة بالفعل"}
+        db.commit()
+        return {"message": "الجلسة دي انتهت صلاحيتها بالفعل" if session.end_reason == "expired" else "الجلسة دي مقفولة بالفعل"}
     session.logout_time = now_cairo()
+    session.end_reason = "revoked"
     session.closed_by_id = admin.id
+    audit(db, admin, "session", session.id, "revoke", {"user": session.username})
     db.commit()
     return {"message": "تم إنهاء الجلسة"}

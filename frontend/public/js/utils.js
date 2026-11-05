@@ -80,6 +80,62 @@ export const KIND = {
   transfer: { label: "نقل", icon: "fa-right-left", tile: "bg-blue-500/10 text-blue-600 dark:text-blue-300", badge: "badge-info" },
 };
 
+// الـ CSP (style-src 'self') بيمنع سمة style="..." في أي HTML بيتحط بـ innerHTML. القوالب بتكتب data-s="..." وبعد الإدراج بننقلها لـ element.style
+// (تعديل الـ CSSOM مسموح بالـ CSP). مفيش أي 'unsafe-inline'.
+export function applyDataStyles(root = document) {
+  root.querySelectorAll("[data-s]").forEach((el) => { el.style.cssText = el.dataset.s; el.removeAttribute("data-s"); });
+}
+
+// اختصار نص طويل بعلامة حذف (بيعدّ الحروف الحقيقية مش الـ UTF-16 units، فالعربي والإيموجي مبيتقطعوش من النص)
+export function ellipsize(text, max = 16) {
+  const chars = [...String(text ?? "")];
+  if (chars.length <= max) return chars.join("");
+  return max <= 1 ? "…" : chars.slice(0, max - 1).join("").trimEnd() + "…";
+}
+
+// لف نص طويل على أسطر (للـ tooltip في Chart.js اللي مبيلفّش لوحده). الكلمة الأطول من العرض بتتقطع.
+export function wrapLines(text, width = 28) {
+  const out = [];
+  let line = "";
+  for (const word of String(text ?? "").split(/\s+/).filter(Boolean)) {
+    let w = [...word];
+    while (w.length > width) { if (line) { out.push(line); line = ""; } out.push(w.slice(0, width).join("")); w = w.slice(width); }
+    const piece = w.join("");
+    if (!line) line = piece;
+    else if ([...line].length + 1 + w.length <= width) line += " " + piece;
+    else { out.push(line); line = piece; }
+  }
+  if (line) out.push(line);
+  return out.length ? out : [""];
+}
+
+// حالات المستندات (إذن صرف: quote/reserved/completed/voided، إذن إضافة: completed/voided) - الاسم المعروض + لون الشارة
+export const DOC_STATUS = {
+  quote: { label: "عرض سعر", cls: "badge-info" },
+  reserved: { label: "محجوزة", cls: "badge-warn" },
+  completed: { label: "تمت", cls: "badge-ok" },
+  voided: { label: "ملغاة", cls: "badge-bad" },
+};
+export const docStatus = (s) => DOC_STATUS[s] || DOC_STATUS.completed;
+
+// UUID للـ idempotency: crypto.randomUUID موجودة بس في HTTPS/localhost، فبنرجع لـ getRandomValues على HTTP العادي
+export function newIdempotencyKey() {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  const b = new Uint8Array(16);
+  if (c && c.getRandomValues) c.getRandomValues(b); else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+  b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+// الرجوع بعد تسجيل الدخول: صفحة .html داخلية بس (اسم ملف + query/hash بسيطين). أي حاجة تانية (//evil.com، javascript:، \\، مسارات، ..) = الافتراضي.
+export function safeNext(raw, fallback = "index.html") {
+  const n = typeof raw === "string" ? raw.trim() : "";
+  if (!n || n.length > 300) return fallback;
+  return /^[a-z0-9][a-z0-9-]*\.html(\?[A-Za-z0-9_=&%.-]*)?(#[A-Za-z0-9_=&%.:-]*)?$/i.test(n) ? n : fallback;
+}
+
 // حالة المنتج من الكمية والحد الأدنى
 export function productStatus(p) {
   if (p.is_active === false) return { key: "inactive", label: "معطّل", cls: "badge-mute" };

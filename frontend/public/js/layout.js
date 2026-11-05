@@ -25,8 +25,9 @@ const NAV = [
     { id: "lookup", label: "البحث عن موقع", href: "location-lookup.html", perm: ["locations.view"] },
   ] },
   { group: "stock", label: "حركة المخزون", icon: "fa-right-left", items: [
-    { id: "stock-in", label: "وارد (فاتورة دخول)", href: "stock-in.html", perm: ["stock_in.create"] },
-    { id: "stock-out", label: "صادر (فاتورة خروج)", href: "stock-out.html", perm: ["stock_out.create"] },
+    { id: "stock-in", label: "إضافة (إذن إضافة)", href: "stock-in.html", perm: ["stock_in.create"] },
+    { id: "stock-out", label: "صرف (إذن صرف / عرض سعر / حجز)", href: "stock-out.html", perm: ["stock_out.create", "stock_out.quote", "stock_out.reserve"] },
+    { id: "stocktake", label: "الجرد", href: "stocktake.html", perm: ["stocktake.manage"] },
     { id: "movements", label: "سجل الحركات", href: "movements.html", perm: ["invoices.view", "transfers.view"] },
   ] },
   { group: "parties", label: "الأطراف", icon: "fa-handshake", items: [

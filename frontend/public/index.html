@@ -52,7 +52,7 @@
             <template x-if="c.loading"><span class="mt-2 block"><span class="skeleton block h-7 w-24"></span><span class="skeleton mt-2 block h-3 w-32"></span></span></template>
             <template x-if="!c.loading">
               <span class="block"><span class="mt-0.5 block text-[28px] font-bold leading-tight" x-text="c.value"></span>
-              <span class="block truncate text-xs text-muted" x-text="c.sub"></span></span>
+              <span class="block truncate text-xs text-muted" x-text="c.sub" :title="c.sub"></span></span>
             </template>
           </span>
         </a>
@@ -73,7 +73,8 @@
               <div class="min-w-0">
                 <div class="text-xs text-slate-400" x-text="f.label"></div>
                 <template x-if="state.summary === 'loading'"><div class="mt-1 h-5 w-24 animate-pulse rounded bg-white/10"></div></template>
-                <template x-if="state.summary !== 'loading'"><div class="truncate text-lg font-bold" x-text="f.value"></div></template>
+                <template x-if="state.summary !== 'loading'"><div class="truncate text-lg font-bold" x-text="f.value" :title="f.value"></div></template>
+                <div class="truncate text-[11px] text-slate-400" x-show="f.sub" x-text="f.sub" :title="f.sub"></div>
               </div>
             </div>
           </template>
@@ -124,19 +125,21 @@
           <div x-show="state.dist === 'ok' && !dist.length" x-cloak class="grid place-items-center py-10 text-center text-sm text-muted">
             <i class="fa-solid fa-box-open mb-2 text-3xl opacity-40"></i>لسه مفيش كميات متوزعة على مخازن
           </div>
-          <div x-show="state.dist === 'ok' && dist.length" x-cloak class="flex flex-col items-center gap-5 sm:flex-row">
+          <div x-show="state.dist === 'ok' && dist.length" x-cloak class="flex flex-wrap items-center justify-center gap-x-5 gap-y-4">
             <div class="relative h-40 w-40 shrink-0">
               <canvas x-ref="distCanvas" role="img" aria-label="توزيع الكميات على المخازن"></canvas>
               <div class="pointer-events-none absolute inset-0 grid place-items-center text-center">
                 <div><div class="text-xl font-bold" x-text="num(distTotal)"></div><div class="text-[11px] text-muted">قطعة</div></div>
               </div>
             </div>
-            <ul class="w-full flex-1 space-y-2.5 text-sm">
+            <!-- min-w-0 + basis: من غيرهم الاسم الطويل بيمنع الـ ul إنه يضيق ويطلع بره الكارت. الاسم بيتقص بعلامة حذف (title عند الوقوف عليه)، والضغط عليه (للمس) بيظهره كامل على أكتر من سطر -->
+            <ul class="min-w-0 max-w-full flex-1 basis-44 space-y-2.5 text-sm">
               <template x-for="d in dist" :key="d.label">
-                <li class="flex items-center gap-2">
-                  <span class="h-2.5 w-2.5 shrink-0 rounded-full" :style="{ background: d.color }"></span>
-                  <span class="min-w-0 flex-1 truncate" x-text="d.label"></span>
-                  <span class="font-medium tabular-nums text-muted" x-text="d.pct + '%'"></span>
+                <li class="flex min-w-0 items-start gap-2" x-data="{ open: false }">
+                  <span class="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" :style="{ background: d.color }"></span>
+                  <button type="button" class="min-w-0 flex-1 text-start" :class="open ? 'whitespace-normal break-words [overflow-wrap:anywhere]' : 'truncate'"
+                    :title="d.label" :aria-expanded="open" :aria-label="d.label" @click="open = !open" x-text="d.label"></button>
+                  <span class="shrink-0 font-medium tabular-nums text-muted" x-text="d.pct + '%'"></span>
                 </li>
               </template>
             </ul>
@@ -211,10 +214,10 @@
               <li class="flex items-center gap-3 py-3">
                 <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl" :class="r.tile"><i class="fa-solid" :class="r.icon"></i></span>
                 <div class="min-w-0 flex-1">
-                  <div class="flex items-center justify-between gap-2"><a :href="r.href" class="truncate font-medium" x-text="r.label + ' · ' + r.ref"></a><b class="shrink-0 text-sm tabular-nums" x-text="r.value || ''"></b></div>
+                  <div class="flex items-center justify-between gap-2"><a :href="r.href" class="truncate font-medium" x-text="r.label + ' · ' + r.ref" :title="r.label + ' · ' + r.ref"></a><b class="shrink-0 text-sm tabular-nums" x-text="r.value || ''"></b></div>
                   <div class="mt-0.5 flex items-center justify-between gap-2 text-xs text-muted">
                     <template x-if="r.kind === 'transfer'"><span class="inline-flex items-center gap-1"><loc-code :code="r.from"></loc-code><i class="fa-solid fa-arrow-left text-[9px]"></i><loc-code :code="r.to"></loc-code></span></template>
-                    <template x-if="r.kind !== 'transfer'"><span class="truncate" x-text="r.party || '—'"></span></template>
+                    <template x-if="r.kind !== 'transfer'"><span class="truncate" x-text="r.party || '—'" :title="r.party || '—'"></span></template>
                     <span class="shrink-0" x-text="r.date"></span>
                   </div>
                 </div>
@@ -253,7 +256,7 @@
             <li>
               <div class="flex items-center justify-between gap-3 text-sm">
                 <div class="min-w-0">
-                  <div class="truncate font-medium" x-text="p.name"></div>
+                  <div class="truncate font-medium" x-text="p.name" :title="p.name"></div>
                   <div x-show="p.sku" x-text="p.sku" dir="ltr" class="text-start text-xs text-muted"></div>
                 </div>
                 <span class="badge shrink-0" :class="p.out ? 'badge-bad' : 'badge-warn'" x-text="p.out ? 'نفد' : 'منخفض'"></span>

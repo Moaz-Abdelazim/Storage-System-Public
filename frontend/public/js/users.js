@@ -82,7 +82,7 @@ document.addEventListener("alpine:init", () => {
     async remove(u) {
       const ok = await confirmAction({
         title: "حذف المستخدم؟", danger: true, confirmText: "حذف",
-        message: `"${u.username}" هيتحذف نهائيًا. فواتيره وسجلاته بتفضل محفوظة باسمه.`,
+        message: `"${u.username}" هيتحذف نهائيًا. مستنداته وسجلاته بتفضل محفوظة باسمه.`,
       });
       if (!ok) return;
       try { await api.del(`/api/auth/users/${u.id}`); toast("تم الحذف"); invalidateData(); this.load(); this.loadStats(); }

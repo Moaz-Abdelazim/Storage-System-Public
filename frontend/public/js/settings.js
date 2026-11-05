@@ -15,7 +15,8 @@ document.addEventListener("alpine:init", () => {
     theme: currentTheme(),
     themes: [{ key: "light", label: "نهاري", icon: "fa-sun" }, { key: "dark", label: "ليلي", icon: "fa-moon" }, { key: "auto", label: "تلقائي", icon: "fa-circle-half-stroke" }],
     pw: { current: "", next: "", confirm: "", saving: false, error: "" },
-    // بيانات الشركة (للأدمن): الاسم + رقمين + اللوجو. بتظهر في الفواتير المطبوعة
+    // بيانات الشركة (للأدمن): الاسم + رقمين + اللوجو. بتظهر في المستندات المطبوعة
+    publicUrl: { value: "", source: "none", saving: false, error: "" },
     company: { name: "", phone1: "", phone2: "", has_logo: false, logo_version: null, saving: false, error: "", logoBusy: false },
     busy: "", file: null, drag: false, importing: false, result: null,
     exports: [
@@ -39,19 +40,24 @@ document.addEventListener("alpine:init", () => {
       catch (e) { c.error = errMsg(e); }
       c.saving = false;
     },
-    // الحد الأقصى للوجو 5 ميجا. الاستضافة على Vercel بترفض أي طلب أكبر من ~4.5 ميجا، فالصور الأكبر من 3.5 ميجا
-    // بتتصغّر هنا في المتصفح (نفس الشكل، أبعاد أقل) قبل الرفع. على VPS الحد ده مش موجود بس التصغير مش بيضر.
+    // اللوجو: PNG أو JPG بس وبحد أقصى 1 ميجا (WebP/GIF/SVG مرفوضين). الصور الأكبر بتتصغّر هنا في المتصفح قبل الرفع:
+    // PNG (بشفافيته) أولًا، ولو لسه كبير JPEG على خلفية بيضاء، مع تقليل الأبعاد تدريجيًا.
     async shrinkLogo(f) {
-      const SAFE = 3.5 * 1024 * 1024;
+      const SAFE = 0.95 * 1024 * 1024;
       if (f.size <= SAFE) return f;
       const bmp = await createImageBitmap(f);
-      let scale = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
-      for (let i = 0; i < 6; i++) {
-        const cv = document.createElement("canvas");
-        cv.width = Math.max(1, Math.round(bmp.width * scale)); cv.height = Math.max(1, Math.round(bmp.height * scale));
-        cv.getContext("2d").drawImage(bmp, 0, 0, cv.width, cv.height);
-        const blob = await new Promise((r) => cv.toBlob(r, "image/webp", 0.9));
-        if (blob && ["image/webp", "image/png"].includes(blob.type) && blob.size <= SAFE) return new File([blob], blob.type === "image/webp" ? "logo.webp" : "logo.png", { type: blob.type });
+      let scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+      const toBlob = (cv, type, q) => new Promise((r) => cv.toBlob(r, type, q));
+      for (let i = 0; i < 8; i++) {
+        const w = Math.max(1, Math.round(bmp.width * scale)), h = Math.max(1, Math.round(bmp.height * scale));
+        const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+        cv.getContext("2d").drawImage(bmp, 0, 0, w, h);
+        const png = await toBlob(cv, "image/png");
+        if (png && png.type === "image/png" && png.size <= SAFE) return new File([png], "logo.png", { type: "image/png" });
+        const bg = document.createElement("canvas"); bg.width = w; bg.height = h;
+        const g = bg.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, w, h); g.drawImage(bmp, 0, 0, w, h);
+        const jpg = await toBlob(bg, "image/jpeg", 0.88);
+        if (jpg && jpg.type === "image/jpeg" && jpg.size <= SAFE) return new File([jpg], "logo.jpg", { type: "image/jpeg" });
         scale *= 0.75;
       }
       return null;
@@ -59,19 +65,30 @@ document.addEventListener("alpine:init", () => {
     async uploadLogo(f) {
       const c = this.company;
       if (!f) return;
-      if (!["image/png", "image/jpeg", "image/webp"].includes(f.type)) { toast("اللوجو لازم يكون PNG أو JPEG أو WebP", "error"); return; }
-      if (f.size > 5 * 1024 * 1024) { toast("حجم اللوجو أكبر من 5 ميجا", "error"); return; }
+      if (!["image/png", "image/jpeg"].includes(f.type)) { toast("اللوجو لازم يكون PNG أو JPG", "error"); return; }
+      if (f.size > 20 * 1024 * 1024) { toast("الصورة كبيرة جدًا", "error"); return; }
       c.logoBusy = true;
       try {
         const file = await this.shrinkLogo(f);
-        if (!file) { toast("مقدرتش أصغّر الصورة لحجم مناسب - جرّب صورة أصغر", "error"); c.logoBusy = false; return; }
+        if (!file) { toast("مقدرتش أصغّر الصورة لحجم مناسب (1 ميجا) - جرّب صورة أصغر", "error"); c.logoBusy = false; return; }
         const fd = new FormData(); fd.append("file", file);
         this.applyCompany(await api.upload("/api/company/logo", fd)); toast("تم رفع اللوجو");
       } catch (e) { toast(errMsg(e), "error"); }
       c.logoBusy = false;
     },
+    async loadPublicUrl() {
+      try { const r = await api.get("/api/settings/public-url"); this.publicUrl.value = r.public_base_url || ""; this.publicUrl.source = r.source; } catch (e) { this.publicUrl.error = errMsg(e); }
+    },
+    async savePublicUrl() {
+      const u = this.publicUrl; u.error = ""; u.saving = true;
+      try {
+        const r = await api.put("/api/settings/public-url", { public_base_url: (u.value || "").trim() });
+        u.value = r.public_base_url || ""; u.source = r.source; toast("تم حفظ العنوان العام");
+      } catch (e) { u.error = errMsg(e); }
+      u.saving = false;
+    },
     async removeLogo() {
-      if (!(await confirmAction({ title: "مسح اللوجو", message: "اللوجو هيتشال من الفواتير المطبوعة.", confirmText: "مسح", danger: true }))) return;
+      if (!(await confirmAction({ title: "مسح اللوجو", message: "اللوجو هيتشال من المستندات المطبوعة.", confirmText: "مسح", danger: true }))) return;
       this.company.logoBusy = true;
       try { this.applyCompany(await api.del("/api/company/logo")); toast("تم مسح اللوجو"); }
       catch (e) { toast(errMsg(e), "error"); }
@@ -79,7 +96,7 @@ document.addEventListener("alpine:init", () => {
     },
 
     init() {
-      if (this.canCompany) this.loadCompany();
+      if (this.canCompany) { this.loadCompany(); this.loadPublicUrl(); }
       window.addEventListener("app-user", (e) => { this.user = e.detail; });
       window.addEventListener("app-theme", (e) => { if (this.theme !== "auto") this.theme = e.detail.dark ? "dark" : "light"; });
       if (location.hash === "#import") this.$nextTick(() => document.getElementById("import")?.scrollIntoView({ behavior: "smooth" }));
@@ -127,8 +144,8 @@ document.addEventListener("alpine:init", () => {
       fd.append("file", this.file);
       try {
         const r = await api.upload("/api/excel/products/import", fd);
-        this.result = { created: r.created || 0, updated: r.updated || 0, errors: r.errors || [] };
-        toast(r.message || "تم الاستيراد", this.result.errors.length ? "error" : "success");
+        this.result = { created: r.created || 0, updated: r.updated || 0, errors: r.errors || [], errors_total: r.errors_total ?? (r.errors || []).length, truncated: !!r.errors_truncated };
+        toast(r.message || "تم الاستيراد", this.result.errors_total ? "error" : "success");
         this.file = null; invalidateData();
       } catch (e) { toast(errMsg(e), "error"); }
       this.importing = false;

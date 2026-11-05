@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, auth
 from ..database import get_db
-from ..query_helpers import contains, page_args, paged, slice_page
+from ..query_helpers import contains, join_valid, out_net_factor, page_args, paged, slice_page, valid_invoice
 from ..timezone_utils import now_cairo
 
 router = APIRouter(
@@ -53,6 +53,18 @@ def _out_price():
     return func.coalesce(OutItem.unit_price, P.price, 0)
 
 
+def _out_net():
+    """
+    قيمة سطر الصادر **بعد توزيع خصم المستند** على أسطره بنسبة قيمة كل سطر من إجمالي المستند قبل الخصم.
+    مجموعها لمستند = صافي المبيعات (subtotal - discount). الضريبة مش داخلة (مش إيراد). بيتستخدم مع join_valid(OutInv, OutItem).
+    """
+    return OutItem.quantity * _out_price() * out_net_factor(OutInv)
+
+
+def _out_gross():
+    return OutItem.quantity * _out_price()
+
+
 def _in_price():
     return func.coalesce(InItem.unit_price, P.price, 0)
 
@@ -68,7 +80,7 @@ def _search_products(q, search: Optional[str]):
 # =====================================================================
 def _dead_base(db: Session, days: int):
     since = _since(days)
-    recent_out = exists().where(and_(OutItem.product_id == P.id, OutItem.invoice_id == OutInv.id, OutInv.date >= since))
+    recent_out = exists().where(and_(OutItem.product_id == P.id, OutItem.invoice_id == OutInv.id, valid_invoice(OutInv), OutInv.date >= since))
     return db.query(P).filter(P.is_active.is_(True), P.quantity > 0, ~recent_out)
 
 
@@ -77,7 +89,7 @@ def _dead_summary(db: Session, days: int) -> dict:
     row = base.with_entities(
         func.count(P.id), func.coalesce(func.sum(P.quantity * P.price), 0), func.coalesce(func.sum(P.quantity), 0)
     ).first()
-    ever_out = exists().where(OutItem.product_id == P.id)
+    ever_out = exists().where(and_(OutItem.product_id == P.id, OutItem.invoice_id == OutInv.id, valid_invoice(OutInv)))
     never = base.filter(~ever_out).count()
     return {"count": row[0] or 0, "total_value": _f(row[1]), "total_quantity": _f(row[2], 3), "never_sold": never}
 
@@ -97,7 +109,7 @@ def dead_stock(
     if prods:
         last_out = dict(
             db.query(OutItem.product_id, func.max(OutInv.date))
-            .select_from(OutItem).join(OutInv, OutInv.id == OutItem.invoice_id)
+            .select_from(OutItem).join(OutInv, join_valid(OutInv, OutItem))
             .filter(OutItem.product_id.in_([p.id for p in prods])).group_by(OutItem.product_id).all()
         )
     now = now_cairo()
@@ -121,19 +133,23 @@ def kpis(days: int = 90, db: Session = Depends(get_db)):
     since = _since(days)
 
     stock_value = _f(db.query(func.coalesce(func.sum(P.price * P.quantity), 0)).filter(P.is_active.is_(True)).scalar())
-    out_value = _f(
-        db.query(func.coalesce(func.sum(OutItem.quantity * _out_price()), 0))
-        .select_from(OutItem).join(OutInv, OutInv.id == OutItem.invoice_id).join(P, P.id == OutItem.product_id)
-        .filter(OutInv.date >= since).scalar()
+    out_row = (
+        db.query(func.coalesce(func.sum(_out_net()), 0), func.coalesce(func.sum(_out_gross()), 0))
+        .select_from(OutItem).join(OutInv, join_valid(OutInv, OutItem)).join(P, P.id == OutItem.product_id)
+        .filter(OutInv.date >= since).first()
+    )
+    out_value, out_gross = _f(out_row[0]), _f(out_row[1])  # صافي بعد الخصم / قبل الخصم
+    tax_collected = _f(
+        db.query(func.coalesce(func.sum(OutInv.tax_amount), 0)).filter(valid_invoice(OutInv), OutInv.date >= since).scalar()
     )
     in_value = _f(
         db.query(func.coalesce(func.sum(InItem.quantity * _in_price()), 0))
-        .select_from(InItem).join(InInv, InInv.id == InItem.invoice_id).join(P, P.id == InItem.product_id)
+        .select_from(InItem).join(InInv, join_valid(InInv, InItem)).join(P, P.id == InItem.product_id)
         .filter(InInv.date >= since).scalar()
     )
     out_qty = _f(
         db.query(func.coalesce(func.sum(OutItem.quantity), 0))
-        .select_from(OutItem).join(OutInv, OutInv.id == OutItem.invoice_id).filter(OutInv.date >= since).scalar(), 3
+        .select_from(OutItem).join(OutInv, join_valid(OutInv, OutItem)).filter(OutInv.date >= since).scalar(), 3
     )
     dead = _dead_summary(db, days)
     dead_value = dead["total_value"]
@@ -147,7 +163,11 @@ def kpis(days: int = 90, db: Session = Depends(get_db)):
         .select_from(A).join(P, P.id == A.product_id).filter(A.date >= since).first()
     )
     return {
-        "days": days, "stock_value": stock_value, "in_value": in_value, "out_value": out_value, "out_qty": out_qty,
+        "days": days, "stock_value": stock_value,  # قيمة المخزون بأسعار البيع (سعر المنتج × الكمية) - مش تكلفة ولا قيمة محاسبية
+        "stock_value_basis": "sale_price",
+        "in_value": in_value, "out_value": out_value,  # out_value = صافي قيمة الصرف بعد الخصم (من غير ضريبة)
+        "out_gross_value": out_gross, "out_discount_value": round(out_gross - out_value, 2), "tax_collected": tax_collected,
+        "out_qty": out_qty,
         "turnover": turnover,  # عدد مرات "تدوير" قيمة المخزون في الفترة (تقديري)
         "days_of_inventory": round(days / turnover, 1) if turnover else None,
         "dead_stock_count": dead["count"], "dead_stock_value": dead_value,
@@ -166,18 +186,19 @@ def trend(days: int = 90, group: str = "day", db: Session = Depends(get_db)):
     group = group if group in ("day", "week", "month") else "day"
     since = _since(days)
 
-    def per_day(inv, item, price):
+    def per_day(inv, item, value, gross=None):
         day = func.date(inv.date)
+        gross = value if gross is None else gross
         rows = (
             db.query(day, func.coalesce(func.sum(item.quantity), 0),
-                     func.coalesce(func.sum(item.quantity * price), 0), func.count(distinct(inv.id)))
-            .select_from(item).join(inv, inv.id == item.invoice_id).join(P, P.id == item.product_id)
+                     func.coalesce(func.sum(value), 0), func.count(distinct(inv.id)), func.coalesce(func.sum(gross), 0))
+            .select_from(item).join(inv, join_valid(inv, item)).join(P, P.id == item.product_id)
             .filter(inv.date >= since).group_by(day).all()
         )
-        return {str(r[0])[:10]: (float(r[1]), float(r[2]), int(r[3])) for r in rows}
+        return {str(r[0])[:10]: (float(r[1]), float(r[2]), int(r[3]), float(r[4])) for r in rows}
 
-    ins = per_day(InInv, InItem, _in_price())
-    outs = per_day(OutInv, OutItem, _out_price())
+    ins = per_day(InInv, InItem, InItem.quantity * _in_price())
+    outs = per_day(OutInv, OutItem, _out_net(), _out_gross())
 
     def bucket(d: str) -> str:
         dt = datetime.fromisoformat(d)
@@ -187,17 +208,18 @@ def trend(days: int = 90, group: str = "day", db: Session = Depends(get_db)):
             return d[:7]
         return d
 
-    agg: Dict[str, dict] = defaultdict(lambda: {"in_qty": 0.0, "out_qty": 0.0, "in_value": 0.0, "out_value": 0.0, "invoices": 0})
-    for d, (q, v, c) in ins.items():
+    agg: Dict[str, dict] = defaultdict(lambda: {"in_qty": 0.0, "out_qty": 0.0, "in_value": 0.0, "out_value": 0.0, "out_gross": 0.0, "invoices": 0})
+    for d, (q, v, c, _g) in ins.items():
         b = agg[bucket(d)]
         b["in_qty"] += q; b["in_value"] += v; b["invoices"] += c
-    for d, (q, v, c) in outs.items():
+    for d, (q, v, c, g) in outs.items():
         b = agg[bucket(d)]
-        b["out_qty"] += q; b["out_value"] += v; b["invoices"] += c
+        b["out_qty"] += q; b["out_value"] += v; b["out_gross"] += g; b["invoices"] += c
 
     items = [
         {"period": k, "in_qty": round(v["in_qty"], 3), "out_qty": round(v["out_qty"], 3),
-         "in_value": round(v["in_value"], 2), "out_value": round(v["out_value"], 2),
+         "in_value": round(v["in_value"], 2), "out_value": round(v["out_value"], 2),  # out_value = صافي بعد الخصم
+         "out_gross_value": round(v["out_gross"], 2), "out_discount_value": round(v["out_gross"] - v["out_value"], 2),
          "net_qty": round(v["in_qty"] - v["out_qty"], 3), "invoices": v["invoices"]}
         for k, v in sorted(agg.items())
     ]
@@ -206,6 +228,8 @@ def trend(days: int = 90, group: str = "day", db: Session = Depends(get_db)):
         "totals": {
             "in_qty": round(sum(i["in_qty"] for i in items), 3), "out_qty": round(sum(i["out_qty"] for i in items), 3),
             "in_value": round(sum(i["in_value"] for i in items), 2), "out_value": round(sum(i["out_value"] for i in items), 2),
+            "out_gross_value": round(sum(i["out_gross_value"] for i in items), 2),
+            "out_discount_value": round(sum(i["out_discount_value"] for i in items), 2),
         },
     }
 
@@ -228,9 +252,9 @@ def _supports_window(db: Session) -> bool:
 def _abc_legacy(db: Session, since: datetime, days: int, page: int, page_size: int, search: Optional[str], until: Optional[datetime] = None) -> dict:
     """النسخة القديمة (حساب الفئات في Python) - بتتستخدم كـ fallback لو الداتا بيز مش بتدعم window functions (مثلًا MySQL 5.7)."""
     rows = (
-        db.query(P.id, P.name, P.sku, func.sum(OutItem.quantity), func.sum(OutItem.quantity * _out_price()),
+        db.query(P.id, P.name, P.sku, func.sum(OutItem.quantity), func.sum(_out_net()),
                  func.count(distinct(OutInv.id)))
-        .select_from(OutItem).join(OutInv, OutInv.id == OutItem.invoice_id).join(P, P.id == OutItem.product_id)
+        .select_from(OutItem).join(OutInv, join_valid(OutInv, OutItem)).join(P, P.id == OutItem.product_id)
         .filter(OutInv.date >= since, *([OutInv.date < until] if until is not None else []))
         .group_by(P.id, P.name, P.sku).all()
     )
@@ -279,10 +303,10 @@ def _abc_sql(db: Session, since: datetime, days: int, page: int, page_size: int,
         select(
             P.id.label("pid"), P.name.label("name"), P.sku.label("sku"),
             func.coalesce(func.sum(OutItem.quantity), 0).label("qty"),
-            func.coalesce(func.sum(OutItem.quantity * _out_price()), 0).label("val"),
+            func.coalesce(func.sum(_out_net()), 0).label("val"),
             func.count(distinct(OutInv.id)).label("inv"),
         )
-        .select_from(OutItem).join(OutInv, OutInv.id == OutItem.invoice_id).join(P, P.id == OutItem.product_id)
+        .select_from(OutItem).join(OutInv, join_valid(OutInv, OutItem)).join(P, P.id == OutItem.product_id)
         .where(OutInv.date >= since, *([OutInv.date < until] if until is not None else []))
         .group_by(P.id, P.name, P.sku).cte("agg")
     )
@@ -403,7 +427,7 @@ def coverage(
 
     sold_sq = (
         db.query(OutItem.product_id.label("pid"), func.sum(OutItem.quantity).label("sold"))
-        .select_from(OutItem).join(OutInv, OutInv.id == OutItem.invoice_id)
+        .select_from(OutItem).join(OutInv, join_valid(OutInv, OutItem))
         .filter(OutInv.date >= since).group_by(OutItem.product_id).subquery()
     )
     cover = P.quantity * days / func.nullif(sold_sq.c.sold, 0)  # أيام الكفاية = الرصيد / (المباع ÷ الأيام)
@@ -451,13 +475,14 @@ def margin(
 
     out_sq = (
         db.query(OutItem.product_id.label("pid"), func.sum(OutItem.quantity).label("qty"),
-                 func.sum(OutItem.quantity * _out_price()).label("rev"))
-        .select_from(OutItem).join(OutInv, OutInv.id == OutItem.invoice_id).join(P, P.id == OutItem.product_id)
+                 func.sum(_out_net()).label("rev"))
+        .select_from(OutItem).join(OutInv, join_valid(OutInv, OutItem)).join(P, P.id == OutItem.product_id)
         .filter(OutInv.date >= since).group_by(OutItem.product_id).subquery()
     )
     cost_sq = (
         db.query(InItem.product_id.label("pid"),
                  (func.sum(InItem.quantity * InItem.unit_price) / func.nullif(func.sum(InItem.quantity), 0)).label("avg_cost"))
+        .select_from(InItem).join(InInv, join_valid(InInv, InItem))  # وارد ملغي مبيدخلش في التكلفة
         .filter(InItem.unit_price.isnot(None), InItem.unit_price > 0).group_by(InItem.product_id).subquery()
     )
     has_cost = cost_sq.c.avg_cost.isnot(None)
@@ -524,7 +549,7 @@ def employees(
         rows = (
             db.query(user_col, func.count(distinct(inv.id)), func.coalesce(func.sum(item.quantity), 0))
             .select_from(inv).outerjoin(item, item.invoice_id == inv.id)
-            .filter(inv.date >= since).group_by(user_col).all()
+            .filter(inv.date >= since, valid_invoice(inv)).group_by(user_col).all()
         )
         for name, cnt, qty in rows:
             u = users[name or "غير معروف"]
@@ -579,7 +604,7 @@ def price_variance(
             InItem.product_id.label("pid"), InInv.supplier_id.label("sid"),
             func.sum(InItem.quantity * InItem.unit_price).label("cost"), func.sum(InItem.quantity).label("qty"),
             func.count(InItem.id).label("n"), func.min(InItem.unit_price).label("pmin"), func.max(InItem.unit_price).label("pmax"),
-        ).select_from(InItem).join(InInv, InInv.id == InItem.invoice_id)
+        ).select_from(InItem).join(InInv, join_valid(InInv, InItem))
     ).group_by(InItem.product_id, InInv.supplier_id).subquery()
 
     avg_s = sub1.c.cost / func.nullif(sub1.c.qty, 0)
@@ -613,11 +638,11 @@ def price_variance(
     if pids:
         latest = valid(
             db.query(InItem.product_id.label("pid"), func.max(InInv.date).label("d"))
-            .select_from(InItem).join(InInv, InInv.id == InItem.invoice_id).filter(InItem.product_id.in_(pids))
+            .select_from(InItem).join(InInv, join_valid(InInv, InItem)).filter(InItem.product_id.in_(pids))
         ).group_by(InItem.product_id).subquery()
         for pid, price in valid(
             db.query(InItem.product_id, InItem.unit_price).select_from(InItem)
-            .join(InInv, InInv.id == InItem.invoice_id)
+            .join(InInv, join_valid(InInv, InItem))
             .join(latest, and_(latest.c.pid == InItem.product_id, latest.c.d == InInv.date))
         ).all():
             last[pid] = float(price)
@@ -721,7 +746,10 @@ def heatmap(days: int = 90, db: Session = Depends(get_db)):
     total = 0
     for model in (InInv, OutInv, models.LocationTransfer):
         wd, hr = _weekday_hour(db, model.date)
-        for w, h, c in db.query(wd, hr, func.count()).filter(model.date >= since, model.date.isnot(None)).group_by(wd, hr).all():
+        conds = [model.date >= since, model.date.isnot(None)]
+        if model is not models.LocationTransfer:
+            conds.append(valid_invoice(model))  # الملغي/عرض السعر/الحجز مش نشاط فعلي
+        for w, h, c in db.query(wd, hr, func.count()).filter(*conds).group_by(wd, hr).all():
             grid[int(w)][int(h)] += c
             total += c
     peak = max(((grid[w][h], w, h) for w in range(7) for h in range(24)), default=(0, 0, 0))

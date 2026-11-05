@@ -6,7 +6,7 @@ from typing import List, Optional
 
 from .. import models, schemas, auth
 from ..database import get_db
-from ..query_helpers import contains, page_args, paged
+from ..query_helpers import contains, page_args, paged, valid_invoice
 
 router = APIRouter(prefix="/api/suppliers", tags=["Suppliers"])
 
@@ -18,7 +18,7 @@ def _aggregates(db: Session, ids):
     rows = (
         db.query(models.StockInInvoice.supplier_id, func.count(func.distinct(models.StockInInvoice.id)), func.sum(models.StockInItem.quantity))
         .join(models.StockInItem, models.StockInItem.invoice_id == models.StockInInvoice.id)
-        .filter(models.StockInInvoice.supplier_id.in_(ids))
+        .filter(models.StockInInvoice.supplier_id.in_(ids), valid_invoice(models.StockInInvoice))
         .group_by(models.StockInInvoice.supplier_id)
         .all()
     )
@@ -55,7 +55,7 @@ def list_suppliers(
     total = q.count()
     rows = q.offset((pg - 1) * size).limit(size).all()
     agg = _aggregates(db, [m.id for m in rows])
-    total_invoices = db.query(func.count(models.StockInInvoice.id)).filter(models.StockInInvoice.supplier_id.isnot(None)).scalar() or 0
+    total_invoices = db.query(func.count(models.StockInInvoice.id)).filter(models.StockInInvoice.supplier_id.isnot(None), valid_invoice(models.StockInInvoice)).scalar() or 0
     return paged([_out(m, agg) for m in rows], total, pg, size, total_invoices=total_invoices)
 
 
@@ -94,7 +94,7 @@ def _aggregate_one(db: Session, entity_id: int):
     row = (
         db.query(func.count(func.distinct(models.StockInInvoice.id)), func.sum(models.StockInItem.quantity))
         .join(models.StockInItem, models.StockInItem.invoice_id == models.StockInInvoice.id)
-        .filter(models.StockInInvoice.supplier_id == entity_id)
+        .filter(models.StockInInvoice.supplier_id == entity_id, valid_invoice(models.StockInInvoice))
         .first()
     )
     return (row[0] or 0, row[1] or 0) if row else (0, 0)
@@ -141,5 +141,5 @@ def delete_supplier(
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=400, detail="المورد ده مرتبط بفواتير وارد سابقة، مينفعش يتحذف.")
+        raise HTTPException(status_code=400, detail="المورد ده مرتبط بإذونات إضافة سابقة، مينفعش يتحذف.")
     return {"message": "تم حذف المورد"}

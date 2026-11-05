@@ -247,7 +247,9 @@ class ProductLocationIn(BaseModel):
 class ProductLocationOut(BaseModel):
     location_id: int
     full_code: str
-    quantity: float
+    quantity: float            # on_hand: الفعلي في المكان
+    reserved: float = 0.0      # محجوز لإذونات صرف حالتها reserved
+    available: float = 0.0     # الفعلي - المحجوز
 
 
 class ProductLocationsSet(BaseModel):
@@ -312,7 +314,9 @@ class ProductOut(BaseModel):
     brand_name: Optional[str] = None
     unit: Optional[str] = None
     price: float
-    quantity: float
+    quantity: float            # on_hand (الرصيد الفعلي) - المعنى ما اتغيرش
+    reserved: float = 0.0      # إجمالي المحجوز
+    available: float = 0.0     # on_hand - reserved
     min_quantity: float
     updated_at: datetime
     is_active: bool = True
@@ -334,7 +338,35 @@ class QuantityAdjustmentCreate(BaseModel):
     reason: Optional[str] = Field(default=None, max_length=1000)
 
 
-# ---------- Stock In (invoice style) ----------
+# ---------- مفتاح منع التكرار ----------
+import re as _re
+
+_IDEM_RE = _re.compile(r"^[A-Za-z0-9\-]{8,36}$")
+
+
+def _clean_idem(value):
+    if value is None or value == "":
+        return None
+    value = str(value).strip()
+    if not _IDEM_RE.match(value):
+        raise ValueError("مفتاح منع التكرار غير صالح")
+    return value
+
+
+class VoidRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+    recreate: bool = False  # صادر بس: "إلغاء وإعادة إنشاء" (نسخة جديدة كعرض سعر)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason(cls, v):
+        v = (v or "").strip()
+        if len(v) < 3:
+            raise ValueError("سبب الإلغاء لازم يكون 3 حروف على الأقل")
+        return v
+
+
+# ---------- Stock In (إذن إضافة: completed / voided بس) ----------
 class StockInItemCreate(BaseModel):
     product_id: int
     quantity: Num
@@ -348,6 +380,9 @@ class StockInInvoiceCreate(BaseModel):
     supplier_id: Optional[int] = None
     notes: Optional[str] = Field(default=None, max_length=5000)
     items: List[StockInItemCreate] = Field(max_length=500)
+    idempotency_key: Optional[str] = None
+
+    _idem = field_validator("idempotency_key", mode="before")(lambda cls, v: _clean_idem(v))
 
 
 class StockInItemOut(BaseModel):
@@ -369,40 +404,57 @@ class StockInInvoiceOut(BaseModel):
     date: datetime
     notes: Optional[str] = None
     items: List[StockInItemOut] = []
-    items_total: int = 0  # إجمالي عدد الأصناف في الفاتورة (ممكن يكون أكبر من طول items لو معروضة مختصرة)
-    total_value: Optional[float] = 0.0  # إجمالي قيمة الفاتورة كاملة. null لو المستخدم ملوش finance.view (فاتورة وارد)
+    items_total: int = 0  # إجمالي عدد الأصناف في المستند (ممكن يكون أكبر من طول items لو معروضة مختصرة)
+    total_value: Optional[float] = 0.0  # إجمالي قيمة المستند كاملة. null لو المستخدم ملوش finance.view (سعر شراء)
+    status: str = "completed"  # completed / voided
+    voided_at: Optional[datetime] = None
+    voided_by_name: Optional[str] = None
+    void_reason: Optional[str] = None
 
 
-# ---------- Stock Out (invoice style) ----------
+# ---------- Stock Out (إذن صرف: quote → reserved → completed، voided) ----------
 class StockOutItemCreate(BaseModel):
     product_id: int
     quantity: Num
-    unit_price: Optional[NonNegNum] = None
-    location_id: Optional[int] = None
+    unit_price: Optional[NonNegNum] = None  # بيتتجاهل: السعر دايمًا من سعر المنتج (وقت إنشاء العرض)
+    location_id: Optional[int] = None       # مطلوب للحجز والصرف الفعلي؛ اختياري في عرض السعر
 
 
 class StockOutInvoiceCreate(BaseModel):
     recipient_id: Optional[int] = None
     notes: Optional[str] = Field(default=None, max_length=5000)
     items: List[StockOutItemCreate] = Field(max_length=500)
-    # اختياري: completed (الافتراضي - الفاتورة تتقفل) أو held (تتساب معلّقة: الكمية بتتخصم وممكن تتعدّل أو تتمسح أو تتقفل بعدين)
-    status: Literal["completed", "held"] = "completed"
-    # خصم/ضريبة اختياريين على إجمالي الفاتورة (النوع: amount = مبلغ ثابت، percent = نسبة %). الحساب والفاليديشن في الباك اند.
+    # quote = عرض سعر (من غير أي تأثير على المخزون)، reserved = حجز (بيقلل المتاح بس)، completed = صرف مباشر (الافتراضي)
+    status: Literal["quote", "reserved", "completed"] = "completed"
+    # الخصم نسبة أو مبلغ، والضريبة **نسبة % فقط**. الحساب والفاليديشن في الباك اند.
     discount_type: Optional[Literal["amount", "percent"]] = None
     discount_value: Optional[Num] = None
-    tax_type: Optional[Literal["amount", "percent"]] = None
+    tax_type: Optional[Literal["percent"]] = None
     tax_value: Optional[Num] = None
+    idempotency_key: Optional[str] = None
+
+    _idem = field_validator("idempotency_key", mode="before")(lambda cls, v: _clean_idem(v))
 
 
 class StockOutInvoiceUpdate(BaseModel):
-    """تعديل فاتورة صادر معلّقة: بنفس شكل الإنشاء (الأصناف بتتبدّل كلها) من غير الحالة."""
+    """تعديل عرض سعر أو حجز: بنفس شكل الإنشاء (الأصناف بتتبدّل كلها) من غير الحالة."""
     recipient_id: Optional[int] = None
     notes: Optional[str] = Field(default=None, max_length=5000)
     items: List[StockOutItemCreate] = Field(max_length=500)
     discount_type: Optional[Literal["amount", "percent"]] = None
     discount_value: Optional[Num] = None
-    tax_type: Optional[Literal["amount", "percent"]] = None
+    tax_type: Optional[Literal["percent"]] = None
     tax_value: Optional[Num] = None
+
+
+class ReserveItemLocation(BaseModel):
+    item_id: int
+    location_id: int
+
+
+class ReserveRequest(BaseModel):
+    """تحويل عرض سعر لحجز. اختياري: تحديد/تغيير مكان السحب لأسطر معيّنة قبل الحجز."""
+    locations: List[ReserveItemLocation] = []
 
 
 class StockOutItemOut(BaseModel):
@@ -424,15 +476,21 @@ class StockOutInvoiceOut(BaseModel):
     date: datetime
     notes: Optional[str] = None
     items: List[StockOutItemOut] = []
-    items_total: int = 0  # إجمالي عدد الأصناف في الفاتورة (ممكن يكون أكبر من طول items لو معروضة مختصرة)
-    total_value: Optional[float] = 0.0  # إجمالي قيمة الفاتورة كاملة. null لو المستخدم ملوش finance.view (فاتورة وارد)
-    # ---- إضافات (اختيارية بقيم افتراضية - الفرونت القديم بيتجاهلها) ----
-    status: str = "completed"
+    items_total: int = 0  # إجمالي عدد الأصناف في المستند (ممكن يكون أكبر من طول items لو معروضة مختصرة)
+    total_value: Optional[float] = 0.0  # إجمالي قيمة الأصناف قبل الخصم (نفس subtotal)
+    status: str = "completed"  # quote / reserved / completed / voided
     discount_type: Optional[str] = None
     discount_value: Optional[float] = None
     tax_type: Optional[str] = None
     tax_value: Optional[float] = None
-    subtotal: Optional[float] = None
+    subtotal: Optional[float] = None       # إجمالي قيمة الأصناف قبل الخصم
     discount_amount: float = 0.0
-    tax_amount: float = 0.0
-    grand_total: Optional[float] = None
+    net_amount: Optional[float] = None     # صافي قيمة الأصناف بعد الخصم (subtotal - discount)
+    tax_amount: float = 0.0                # على صافي القيمة بعد الخصم
+    grand_total: Optional[float] = None    # الإجمالي = net + tax
+    completed_at: Optional[datetime] = None
+    voided_at: Optional[datetime] = None
+    voided_by_name: Optional[str] = None
+    void_reason: Optional[str] = None
+    copied_from_id: Optional[int] = None
+    recreated_invoice_id: Optional[int] = None  # في رد الإلغاء مع إعادة الإنشاء

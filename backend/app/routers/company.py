@@ -4,7 +4,7 @@
 الصلاحيات: أي مستخدم مسجّل يقدر يقرأ (محتاجينها للطباعة)، والكتابة (تعديل البيانات/رفع/مسح اللوجو) للأدمن بس.
 مفيش أي حاجة هنا متاحة من غير login.
 
-اللوجو: PNG / JPEG / WebP بس (بنتحقق من محتوى الملف الحقيقي مش الامتداد)، حد أقصى 5 ميجا (MAX_LOGO_MB)، والـ SVG مرفوض (خطر XSS).
+اللوجو: PNG / JPEG بس (بنتحقق من محتوى الملف الحقيقي مش الامتداد، والـ WebP مرفوض)، حد أقصى 1 ميجا (MAX_LOGO_MB)، والـ SVG مرفوض (خطر XSS).
 بيتقدّم من endpoint بـ Content-Type صح و ETag + Cache-Control عشان ما يتحمّلش مع كل فاتورة.
 """
 import hashlib
@@ -19,31 +19,29 @@ from sqlalchemy.orm import Session
 
 from .. import models, auth
 from ..database import get_db
+from ..services.audit import audit
 
 router = APIRouter(prefix="/api/company", tags=["Company"])
 
 def _logo_limit_mb() -> float:
     try:
-        return max(0.1, min(float(os.getenv("MAX_LOGO_MB", "5")), 10))
+        return max(0.1, min(float(os.getenv("MAX_LOGO_MB", "1")), 2))
     except ValueError:
-        return 5.0
+        return 1.0
 
 
-# الافتراضي 5 ميجا. ملحوظة: Vercel serverless بيرفض أي طلب أكبر من ~4.5 ميجا قبل ما يوصل للكود،
-# عشان كده صفحة الإعدادات بتصغّر الصور الكبيرة تلقائيًا قبل الرفع. على VPS الحد ده مش موجود.
+# الافتراضي 1 ميجا، وصفحة الإعدادات بتصغّر الصور الكبيرة تلقائيًا في المتصفح قبل الرفع.
 MAX_LOGO_BYTES = int(_logo_limit_mb() * 1024 * 1024)
 MAX_LOGO_LABEL = f"{_logo_limit_mb():g} ميجا"
 _PHONE_RE = re.compile(r"^[0-9+\-()\s]{3,30}$")
 
 
 def sniff_image_mime(data: bytes) -> Optional[str]:
-    """نوع الصورة من محتوى الملف الحقيقي (magic bytes). بيرجّع None لأي حاجة مش PNG/JPEG/WebP (SVG مثلًا)."""
+    """نوع الصورة من محتوى الملف الحقيقي (magic bytes). بيرجّع None لأي حاجة مش PNG/JPEG (SVG وWebP مرفوضين)."""
     if data.startswith(b"\x89PNG\r\n\x1a\n") and data[12:16] == b"IHDR":
         return "image/png"
     if data.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
-    if len(data) > 16 and data[:4] == b"RIFF" and data[8:12] == b"WEBP" and data[12:15] == b"VP8":
-        return "image/webp"
     return None
 
 
@@ -98,7 +96,9 @@ def get_company(db: Session = Depends(get_db), current_user: models.User = Depen
 @router.put("")
 def update_company(payload: CompanyIn, db: Session = Depends(get_db), admin: models.User = Depends(auth.require_permission("settings.company"))):
     row = _get_row(db)
+    before = {"name": row.name, "phone1": row.phone1, "phone2": row.phone2}
     row.name, row.phone1, row.phone2 = payload.name, payload.phone1, payload.phone2
+    audit(db, admin, "company", 1, "update", {"before": before, "after": {"name": row.name, "phone1": row.phone1, "phone2": row.phone2}})
     db.commit()
     return _public(db)
 
@@ -120,9 +120,10 @@ def upload_logo(
         raise HTTPException(status_code=413, detail=f"حجم اللوجو أكبر من {MAX_LOGO_LABEL}")
     mime = sniff_image_mime(data)
     if mime is None:
-        raise HTTPException(status_code=400, detail="الملف مش صورة صالحة - المسموح PNG أو JPEG أو WebP بس")
+        raise HTTPException(status_code=400, detail="الملف مش صورة صالحة - المسموح PNG أو JPG بس")
     row = _get_row(db)
     row.logo, row.logo_mime, row.logo_etag = data, mime, hashlib.sha1(data).hexdigest()
+    audit(db, admin, "company", 1, "logo_upload", {"mime": mime, "bytes": len(data)})
     db.commit()
     return _public(db)
 
@@ -131,6 +132,7 @@ def upload_logo(
 def delete_logo(db: Session = Depends(get_db), admin: models.User = Depends(auth.require_permission("settings.company"))):
     row = _get_row(db)
     row.logo = row.logo_mime = row.logo_etag = None
+    audit(db, admin, "company", 1, "logo_delete", None)
     db.commit()
     return _public(db)
 

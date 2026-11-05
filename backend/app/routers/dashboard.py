@@ -14,7 +14,7 @@ from .. import models, auth, permissions
 from ..database import get_db
 from ..display_utils import format_user_display
 from ..location_utils import LocationIndex
-from ..query_helpers import invoice_totals
+from ..query_helpers import invoice_totals, out_net_factor, valid_invoice
 from ..timezone_utils import now_cairo
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
@@ -30,23 +30,25 @@ def _flow(db: Session, days: int, with_values: bool) -> List[dict]:
     start = datetime.combine(first, time.min)
     end = datetime.combine(today + timedelta(days=1), time.min)
 
-    def aggregate(inv_model, item_model) -> Dict[str, tuple]:
+    def aggregate(inv_model, item_model, net: bool = False) -> Dict[str, tuple]:
+        # مستندات completed بس (عروض الأسعار والحجوزات والملغي مش حركة فعلية). قيمة الصادر = صافي بعد توزيع الخصم (من غير ضريبة)
         day = func.date(inv_model.date)
         cols = [day, func.coalesce(func.sum(item_model.quantity), 0), func.count(func.distinct(inv_model.id))]
         if with_values:
-            cols.append(func.coalesce(func.sum(item_model.quantity * func.coalesce(item_model.unit_price, 0)), 0))
+            line = item_model.quantity * func.coalesce(item_model.unit_price, 0)
+            cols.append(func.coalesce(func.sum(line * out_net_factor(inv_model) if net else line), 0))
         rows = (
             db.query(*cols)
             .select_from(inv_model)
             .join(item_model, item_model.invoice_id == inv_model.id)
-            .filter(inv_model.date >= start, inv_model.date < end)
+            .filter(inv_model.date >= start, inv_model.date < end, valid_invoice(inv_model))
             .group_by(day)
             .all()
         )
         return {_day_key(r[0]): r[1:] for r in rows}
 
     ins = aggregate(models.StockInInvoice, models.StockInItem)
-    outs = aggregate(models.StockOutInvoice, models.StockOutItem)
+    outs = aggregate(models.StockOutInvoice, models.StockOutItem, net=True)
 
     result = []
     for i in range(days):
@@ -100,8 +102,9 @@ def _distribution(db: Session) -> List[dict]:
 def _recent_movements(db: Session, is_admin: bool, limit: int = 6, can_invoices: bool = True, can_transfers: bool = True) -> List[dict]:
     I, O, T = models.StockInInvoice, models.StockOutInvoice, models.LocationTransfer
     # كل نوع بصلاحيته: وارد/صادر ← invoices.view، نقل ← transfers.view
-    ins = db.query(I).options(joinedload(I.supplier), joinedload(I.received_by)).order_by(I.date.desc()).limit(limit).all() if can_invoices else []
-    outs = db.query(O).options(joinedload(O.recipient), joinedload(O.delivered_by)).order_by(O.date.desc()).limit(limit).all() if can_invoices else []
+    # الحركة الفعلية بس (completed): عروض الأسعار والحجوزات والملغي مش بتظهر هنا
+    ins = db.query(I).options(joinedload(I.supplier), joinedload(I.received_by)).filter(valid_invoice(I)).order_by(I.date.desc()).limit(limit).all() if can_invoices else []
+    outs = db.query(O).options(joinedload(O.recipient), joinedload(O.delivered_by)).filter(valid_invoice(O)).order_by(O.date.desc()).limit(limit).all() if can_invoices else []
     trs = db.query(T).options(joinedload(T.product), joinedload(T.moved_by)).order_by(T.date.desc()).limit(limit).all() if can_transfers else []
 
     in_tot = invoice_totals(db, models.StockInItem, [i.id for i in ins])
@@ -123,7 +126,8 @@ def _recent_movements(db: Session, is_admin: bool, limit: int = 6, can_invoices:
             "party_name": o.recipient.name if o.recipient else None,
             "user_name": format_user_display(o.delivered_by, o.delivered_by_username),
             "items_total": out_tot.get(o.id, (0, 0))[0],
-            "total_value": out_tot.get(o.id, (0, 0))[1] if is_admin else None,
+            "total_value": (o.subtotal_amount if o.subtotal_amount is not None else out_tot.get(o.id, (0, 0))[1]) if is_admin else None,
+            "net_amount": round((o.subtotal_amount or 0) - (o.discount_amount or 0), 2) if is_admin else None,
         })
     for t in trs:
         rows.append({
@@ -149,6 +153,7 @@ def overview(
 
     total_products = db.query(func.count(P.id)).filter(P.is_active.is_(True)).scalar() or 0
     total_quantity = db.query(func.coalesce(func.sum(P.quantity), 0)).scalar() or 0
+    total_reserved = db.query(func.coalesce(func.sum(models.ProductLocation.reserved), 0)).scalar() or 0
     low_q = db.query(P).filter(P.is_active.is_(True), P.quantity <= P.min_quantity)
     low_total = low_q.count()
     low_items = low_q.order_by((P.quantity - P.min_quantity).asc(), P.name).limit(6).all()
@@ -162,7 +167,9 @@ def overview(
     data = {
         "summary": {
             "total_products": total_products,
-            "total_quantity": round(float(total_quantity), 3),
+            "total_quantity": round(float(total_quantity), 3),  # الفعلي (on_hand)
+            "total_reserved": round(float(total_reserved), 3),
+            "total_available": round(float(total_quantity) - float(total_reserved), 3),
             "low_stock_count": low_total,
             "out_of_stock_count": out_of_stock,
             "total_suppliers": db.query(func.count(models.Supplier.id)).scalar() or 0,
@@ -193,20 +200,26 @@ def overview(
         year_start = datetime(now.year, 1, 1)
 
         def out_since(start):
-            row = (
-                db.query(
-                    func.coalesce(func.sum(models.StockOutItem.quantity), 0),
-                    func.coalesce(func.sum(models.StockOutItem.quantity * func.coalesce(models.StockOutItem.unit_price, 0)), 0),
-                )
-                .join(models.StockOutInvoice, models.StockOutInvoice.id == models.StockOutItem.invoice_id)
-                .filter(models.StockOutInvoice.date >= start)
-                .first()
+            """إذونات الصرف **المكتملة** بس من بداية الفترة: الكمية + قبل الخصم/الخصومات/صافي المبيعات/الضريبة/الإجمالي."""
+            O, OI = models.StockOutInvoice, models.StockOutItem
+            qty = (
+                db.query(func.coalesce(func.sum(OI.quantity), 0))
+                .join(O, O.id == OI.invoice_id).filter(valid_invoice(O), O.date >= start).scalar()
             )
-            return {"quantity": round(float(row[0]), 3), "value": round(float(row[1]), 2)}
+            sums = (
+                db.query(func.coalesce(func.sum(O.subtotal_amount), 0), func.coalesce(func.sum(O.discount_amount), 0),
+                         func.coalesce(func.sum(O.tax_amount), 0), func.coalesce(func.sum(O.grand_total), 0))
+                .filter(valid_invoice(O), O.date >= start).first()
+            )
+            gross, disc, tax, grand = (round(float(x or 0), 2) for x in sums)
+            return {"quantity": round(float(qty or 0), 3), "gross_sales": gross, "discounts": disc,
+                    "net_sales": round(gross - disc, 2), "tax_collected": tax, "grand_total": grand,
+                    "value": round(gross - disc, 2)}  # value = صافي المبيعات بعد الخصم (توافق مع الواجهة القديمة)
 
         stock_value = db.query(func.coalesce(func.sum(P.price * P.quantity), 0)).scalar() or 0
         data["admin"] = {
-            "total_stock_value": round(float(stock_value), 2),
+            "total_stock_value": round(float(stock_value), 2),  # بأسعار البيع (سعر المنتج × الكمية) - مش تكلفة ولا قيمة محاسبية
+            "stock_value_basis": "sale_price",
             "out_totals": {"today": out_since(day_start), "month": out_since(month_start), "year": out_since(year_start)},
         }
     return data

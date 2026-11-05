@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas, auth, permissions
 from ..database import get_db
+from ..services.audit import audit
 from ..location_utils import (
     LocationIndex, normalize_code, require_leaf_location, query_transfers, transfer_to_dict, lock_products,
 )
@@ -45,7 +46,9 @@ def _location_has_history(db: Session, location_id: int) -> bool:
         return True
     if db.query(models.StockInItem.id).filter(models.StockInItem.location_id == location_id).first():
         return True
-    return db.query(models.StockOutItem.id).filter(models.StockOutItem.location_id == location_id).first() is not None
+    if db.query(models.StockOutItem.id).filter(models.StockOutItem.location_id == location_id).first():
+        return True
+    return db.query(models.StocktakeLine.id).filter(models.StocktakeLine.location_id == location_id).first() is not None
 
 
 def _page(rows: list, page: int, page_size: int, default: int = 10, max_size: int = 100) -> dict:
@@ -63,7 +66,7 @@ def _page(rows: list, page: int, page_size: int, default: int = 10, max_size: in
 #  Warehouses
 # =====================================================================
 @router.get("/warehouses")
-def list_warehouses(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_any_permission("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage"))):
+def list_warehouses(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_any_permission(*permissions.LOCATION_READ))):
     idx = LocationIndex(db)
     return [idx.warehouse_dict(w) for w in idx.warehouses_sorted()]
 
@@ -150,7 +153,7 @@ def delete_warehouse(
 #  Tree + children (للـ Tree View وللقوائم المتدرجة)
 # =====================================================================
 @router.get("/tree")
-def tree(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_any_permission("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage"))):
+def tree(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_any_permission(*permissions.LOCATION_READ))):
     idx = LocationIndex(db)
     default_ids = idx.default_location_ids()
     qty_by_loc = defaultdict(float)
@@ -205,7 +208,7 @@ def children(
     warehouse_id: Optional[int] = None,
     parent_id: Optional[int] = None,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.require_any_permission("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage")),
+    current_user: models.User = Depends(auth.require_any_permission(*permissions.LOCATION_READ)),
 ):
     idx = LocationIndex(db)
     if parent_id:
@@ -228,7 +231,7 @@ def children(
 
 
 @router.get("/index")
-def location_index(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_any_permission("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage"))):
+def location_index(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_any_permission(*permissions.LOCATION_READ))):
     """
     خريطة مسطّحة {الكود الكامل: [المستويات بأسمائها]} - الواجهة بتستخدمها للـ pop-up اللي بيظهر
     لما الماوس يقف على أي كود مكان (من غير طلب لكل كود).
@@ -361,7 +364,7 @@ def delete_location(
 def resolve_location(
     code: str,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.require_any_permission("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage")),
+    current_user: models.User = Depends(auth.require_any_permission(*permissions.LOCATION_READ)),
 ):
     """
     البحث عن مخزن/موقع بالكود الكامل وعرض البضاعة اللي فيه (وفي كل اللي تحته).
@@ -394,6 +397,7 @@ def resolve_location(
         "products_count": int(products_count or 0),
         "products": [
             {"product_id": p.id, "name": p.name, "sku": p.sku, "unit": p.unit, "quantity": pl.quantity,
+             "reserved": _round_qty(pl.reserved or 0), "available": _round_qty(pl.quantity - (pl.reserved or 0)),
              "location_code": idx.full_code(pl.location_id)}
             for pl, p in rows
         ],
@@ -441,6 +445,9 @@ def transfer_product(
             date=now_cairo(),
         )
         db.add(t)
+        db.flush()
+        audit(db, current_user, "transfer", t.id, "create",
+              {"product": product.name, "from": idx.full_code(from_loc.id), "to": idx.full_code(payload.to_location_id), "qty": float(qty)})
         db.commit()
         db.refresh(t)
         return t
@@ -541,7 +548,7 @@ def stock_by_location(
     breakdown_page: int = 1,
     breakdown_page_size: int = 8,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.require_any_permission("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage")),
+    current_user: models.User = Depends(auth.require_any_permission(*permissions.LOCATION_READ)),
 ):
     """
     إجمالي الكمية (والقيمة لو أدمن) جوه مخزن أو أي موقع (بكل اللي تحته)، مع تفصيل حسب المستوى اللي تحته مباشرة،
@@ -595,7 +602,7 @@ def stock_by_location(
 
     # ---- المنتجات: تجميع بالصنف + ترقيم في SQL ----
     pq = scoped(
-        db.query(P.id, P.name, P.sku, P.unit, func.sum(PL.quantity), func.sum(PL.quantity * P.price)).select_from(PL).join(P, P.id == PL.product_id)
+        db.query(P.id, P.name, P.sku, P.unit, func.sum(PL.quantity), func.sum(PL.quantity * P.price), func.sum(PL.reserved)).select_from(PL).join(P, P.id == PL.product_id)
     )
     if search and search.strip():
         pq = pq.filter(contains(P.name, search) | contains(P.sku, search))
@@ -605,13 +612,15 @@ def stock_by_location(
     pids = [r[0] for r in rows]
     locs_of = defaultdict(list)
     if pids:
-        for pid, lid, qty in scoped(db.query(PL.product_id, PL.location_id, PL.quantity).filter(PL.product_id.in_(pids))).all():
-            locs_of[pid].append({"full_code": idx.full_code(lid), "quantity": _round_qty(qty)})
+        for pid, lid, qty, res in scoped(db.query(PL.product_id, PL.location_id, PL.quantity, PL.reserved).filter(PL.product_id.in_(pids))).all():
+            locs_of[pid].append({"full_code": idx.full_code(lid), "quantity": _round_qty(qty),
+                                 "reserved": _round_qty(res or 0), "available": _round_qty(qty - (res or 0))})
     items = []
-    for pid, name, sku, unit, qty, val in rows:
+    for pid, name, sku, unit, qty, val, res in rows:
         ls = sorted(locs_of.get(pid, []), key=lambda x: x["full_code"])
         items.append({"product_id": pid, "name": name, "sku": sku, "unit": unit, "quantity": _round_qty(qty),
-                      "value": round(float(val or 0), 2) if show_value else None,
+                      "reserved": _round_qty(res or 0), "available": _round_qty(qty - (res or 0)),
+                      "value": round(float(val or 0), 2) if show_value else None,  # بأسعار البيع (مش تكلفة)
                       "locations": [f"{l['full_code']}: {l['quantity']}" for l in ls], "location_items": ls})
 
     if location_id:

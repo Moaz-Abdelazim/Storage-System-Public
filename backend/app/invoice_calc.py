@@ -1,5 +1,5 @@
 """
-حساب إجماليات فاتورة الصادر (خصم + ضريبة على إجمالي الفاتورة) بـ Decimal عشان نتفادى مشاكل الـ float
+حساب إجماليات إذن الصرف (خصم على إجمالي قيمة الأصناف + ضريبة % على الصافي بعد الخصم) بـ Decimal عشان نتفادى مشاكل الـ float
 (زي bug حفظ 25 كـ 24.89). الحساب هنا في الباك اند هو المرجع، والفرونت بيعرض معاينة بس.
 
 الترتيب: الإجمالي الفرعي = مجموع (كمية × سعر) → الخصم → الضريبة على (الإجمالي - الخصم) → الإجمالي النهائي.
@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 _TWO = Decimal("0.01")
 ADJUSTMENT_KINDS = ("amount", "percent")
+TAX_KINDS = ("percent",)  # الضريبة نسبة % فقط (قرار صاحب المشروع)
 
 
 def _d(value) -> Decimal:
@@ -28,12 +29,13 @@ def subtotal_of(lines: Iterable[Tuple[float, Optional[float]]]) -> float:
     return float(_q2(total))
 
 
-def normalize_adjustment(kind: Optional[str], value, label: str) -> Tuple[Optional[str], Optional[Decimal]]:
+def normalize_adjustment(kind: Optional[str], value, label: str, allowed=ADJUSTMENT_KINDS) -> Tuple[Optional[str], Optional[Decimal]]:
     """بيتحقق من (نوع، قيمة) الخصم أو الضريبة. القيمة صفر أو الفاضية معناها "مفيش" فبترجع (None, None)."""
     if value is None or value == "":
         return None, None
-    if kind not in ADJUSTMENT_KINDS:
-        raise HTTPException(status_code=400, detail=f"نوع {label} لازم يكون مبلغ ثابت أو نسبة %")
+    if kind not in allowed:
+        what = "نسبة %" if allowed == TAX_KINDS else "مبلغ ثابت أو نسبة %"
+        raise HTTPException(status_code=400, detail=f"نوع {label} لازم يكون {what}")
     v = _d(value)
     if v < 0:
         raise HTTPException(status_code=400, detail=f"قيمة {label} لا يمكن تكون سالبة")
@@ -48,7 +50,7 @@ def compute_totals(lines, discount_type=None, discount_value=None, tax_type=None
     """lines: [(quantity, unit_price)]. بترجع كل القيم اللي بتتخزن في الفاتورة (floats مقرّبة لخانتين)."""
     subtotal = _q2(sum((_d(round(q, 3)) * _d(p) for q, p in lines), Decimal(0)))
     d_type, d_val = normalize_adjustment(discount_type, discount_value, "الخصم")
-    t_type, t_val = normalize_adjustment(tax_type, tax_value, "الضريبة")
+    t_type, t_val = normalize_adjustment(tax_type, tax_value, "الضريبة", TAX_KINDS)
 
     discount = Decimal(0)
     if d_type == "percent":
@@ -56,14 +58,12 @@ def compute_totals(lines, discount_type=None, discount_value=None, tax_type=None
     elif d_type == "amount":
         discount = _q2(d_val)
     if discount > subtotal:
-        raise HTTPException(status_code=400, detail="الخصم أكبر من إجمالي الفاتورة")
+        raise HTTPException(status_code=400, detail="الخصم أكبر من إجمالي قيمة الأصناف")
 
     base = subtotal - discount
     tax = Decimal(0)
     if t_type == "percent":
         tax = _q2(base * t_val / 100)
-    elif t_type == "amount":
-        tax = _q2(t_val)
 
     return {
         "subtotal_amount": float(subtotal),
@@ -71,5 +71,6 @@ def compute_totals(lines, discount_type=None, discount_value=None, tax_type=None
         "discount_amount": float(discount),
         "tax_type": t_type, "tax_value": float(_q2(t_val)) if t_val is not None else None,
         "tax_amount": float(tax),
+        "net_amount": float(base),
         "grand_total": float(_q2(base + tax)),
     }

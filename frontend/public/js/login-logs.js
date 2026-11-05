@@ -3,8 +3,19 @@ import { can } from "./auth.js";
 import { api, qs } from "./api.js";
 import { fmtDateTime, toast, errMsg, confirmAction } from "./utils.js";
 
+// حالة الجلسة بتيجي من السيرفر (محسوبة من expires_at و end_reason): مفتوحة / انتهت صلاحيتها / سجّل خروج / أنهاها أدمن / أُغلقت من النظام
+const STATUS = {
+  active: { label: "مفتوحة", cls: "badge-ok" },
+  expired: { label: "انتهت صلاحيتها", cls: "badge-warn" },
+  logged_out: { label: "سجّل خروج", cls: "badge-mute" },
+  revoked: { label: "أُنهيت إداريًا", cls: "badge-bad" },
+  system: { label: "أُغلقت تلقائيًا", cls: "badge-mute" },
+};
+const statusOf = (l) => STATUS[l.status] || STATUS.logged_out;
+const statusLabel = (l) => (l.status === "revoked" && l.closed_by ? `أنهاها ${l.closed_by}` : statusOf(l).label);
+
 function duration(l) {
-  const end = l.logout_time ? new Date(l.logout_time) : new Date();
+  const end = l.ended_at ? new Date(l.ended_at) : new Date();
   const mins = Math.max(0, Math.round((end - new Date(l.login_time)) / 60000));
   if (mins < 60) return `${mins} د`;
   const h = Math.floor(mins / 60);
@@ -14,10 +25,10 @@ function duration(l) {
 document.addEventListener("alpine:init", () => {
   window.Alpine.data("loginLogs", () => ({
     canRevoke: can("sessions.revoke"),
-    fmtDateTime, duration,
+    fmtDateTime, duration, statusOf, statusLabel,
     rows: [], loading: true, error: "", page: 1, pages: 1, total: 0, size: 15,
     f: { user: "", ip: "", status: "", date_from: "", date_to: "" },
-    statuses: [{ key: "", label: "الكل" }, { key: "active", label: "مفتوحة" }, { key: "closed", label: "مقفولة" }],
+    statuses: [{ key: "", label: "الكل" }, { key: "active", label: "مفتوحة" }, { key: "expired", label: "منتهية" }, { key: "logged_out", label: "خروج" }, { key: "revoked", label: "إنهاء إداري" }],
 
     init() { this.load(); },
     apply() { this.page = 1; this.load(); },

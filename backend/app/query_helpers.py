@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Iterable, Optional, Tuple
 
 from fastapi import HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 
@@ -82,3 +82,33 @@ def paged(items, total: int, page: int, page_size: int, **extra) -> dict:
 
 def slice_page(rows: list, page: int, page_size: int) -> list:
     return rows[(page - 1) * page_size: page * page_size]
+
+
+# ---------------------------------------------------------------------------
+# helper موحّد لاستبعاد المستندات غير الفعلية من التقارير (قاعدة 14):
+#  - الوارد: completed فقط (الملغي بره).
+#  - الصادر: completed فقط (عرض السعر والحجز والملغي مش حركة فعلية ومش مبيعات).
+# كل استعلام تقرير/إجمالي/ربحية بيستخدم valid_invoice(Inv)؛ سجل الحركة بيستخدم movement_invoice(Inv, include_voided).
+# ---------------------------------------------------------------------------
+def valid_invoice(Inv):
+    return Inv.status == "completed"
+
+
+def movement_invoice(Inv, include_voided: bool = False):
+    """للسجل: المكتمل، ولو include_voided كمان الملغي (بعلامة). عروض الأسعار والحجوزات مش حركة فعلية فمبتظهرش هنا."""
+    return Inv.status.in_(("completed", "voided")) if include_voided else valid_invoice(Inv)
+
+
+def join_valid(Inv, Item):
+    """شرط الـ JOIN بين المستند وأسطره + صلاحيته للتقارير (inner join فبيشتغل زي الفلتر)."""
+    from sqlalchemy import and_
+
+    return and_(Inv.id == Item.invoice_id, valid_invoice(Inv))
+
+
+def out_net_factor(Inv):
+    """
+    معامل توزيع الخصم على الأسطر: 1 - (خصم المستند / إجمالي قيمة الأصناف قبل الخصم). حصة كل سطر من الخصم بنسبة قيمته،
+    فصافي السطر = قيمته × المعامل ومجموع الصافي = صافي المستند. القسمة على صفر = معامل 1 (من غير خصم).
+    """
+    return 1 - func.coalesce(func.coalesce(Inv.discount_amount, 0) / func.nullif(Inv.subtotal_amount, 0), 0)

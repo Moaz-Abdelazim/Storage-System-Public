@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>الجرد | مخزني</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="js/theme-init.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+</head>
+<body>
+<noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
+
+<div id="shell" data-perm="stocktake.manage" data-active="stocktake" data-title="الجرد">
+  <div x-data="stocktake" class="space-y-5">
+
+    <!-- ============ قايمة جلسات الجرد ============ -->
+    <template x-if="!id">
+      <div class="space-y-5">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div><h1 class="text-2xl font-bold">الجرد</h1><p class="mt-1 text-sm text-muted">عدّ فعلي لمخزن أو موقع ← مراجعة الفروقات ← اعتماد يسوّي الأرصدة (بسجل تعديل وتدقيق).</p></div>
+          <button type="button" class="btn btn-primary" @click="create.open = true"><i class="fa-solid fa-plus"></i>جلسة جرد جديدة</button>
+        </div>
+
+        <div class="seg"><template x-for="s in [{k:'',l:'الكل'},{k:'counting',l:'جاري العدّ'},{k:'review',l:'مراجعة'},{k:'approved',l:'معتمد'},{k:'cancelled',l:'ملغي'}]" :key="s.k"><button type="button" class="seg-btn" :class="list.status === s.k && 'seg-btn-on'" @click="setStatus(s.k)" x-text="s.l"></button></template></div>
+
+        <section class="card">
+          <div class="overflow-x-auto px-3 pt-3">
+            <table class="tbl">
+              <thead><tr><th>#</th><th>النطاق</th><th>الحالة</th><th>الأسطر</th><th>المعدود</th><th>أنشأه</th><th>التاريخ</th></tr></thead>
+              <tbody>
+                <template x-for="r in list.rows" :key="r.id">
+                  <tr class="cursor-pointer" @click="open(r.id)">
+                    <td class="font-medium" x-text="'#' + r.id"></td>
+                    <td><span class="code-chip" x-text="r.scope || '—'"></span><div class="max-w-[220px] truncate text-xs text-muted" x-show="r.note" x-text="r.note" :title="r.note"></div></td>
+                    <td><span class="badge" :class="STATUS[r.status].cls" x-text="STATUS[r.status].label"></span></td>
+                    <td class="tabular-nums" x-text="num(r.lines_total)"></td><td class="tabular-nums" x-text="num(r.counted)"></td>
+                    <td class="text-muted" x-text="r.created_by || '—'"></td><td class="text-muted" x-text="fmtDateTime(r.created_at)"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div class="empty" x-show="!list.loading && !list.rows.length && !list.error" x-cloak><i class="fa-solid fa-clipboard-check mb-3 text-4xl opacity-40"></i>مفيش جلسات جرد</div>
+            <div class="empty" x-show="list.error" x-cloak><p class="mb-3 text-red-500" x-text="list.error"></p><button type="button" class="btn btn-outline btn-sm" @click="loadList()">إعادة المحاولة</button></div>
+          </div>
+          <div class="border-t border-line px-4"><ui-pager :page="list.page" :pages="list.pages" :total="list.total" :size="list.size" @go="list.page = $event.detail; loadList()"></ui-pager></div>
+        </section>
+
+        <!-- إنشاء جلسة -->
+        <div x-show="create.open" x-cloak x-transition.opacity class="modal" role="dialog" aria-modal="true" @keydown.escape.window="create.open = false">
+          <div class="modal-backdrop" @click="create.open = false"></div>
+          <form class="modal-panel max-w-md" @submit.prevent="createSession()" novalidate>
+            <div class="modal-head"><h2 class="text-lg font-bold">جلسة جرد جديدة</h2><button type="button" class="btn btn-ghost btn-icon btn-sm" @click="create.open = false" aria-label="إغلاق"><i class="fa-solid fa-xmark"></i></button></div>
+            <div class="modal-body space-y-4">
+              <div><label class="label">المخزن أو الموقع *</label><ui-select source="all-nodes" placeholder="اختار مخزن أو موقع (بكل اللي تحته)" @pick="create.scope = $event.detail.value"></ui-select>
+                <p class="mt-1 text-xs text-muted">بتتاخد لقطة بأرصدة كل الأصناف الموجودة فيه دلوقتي.</p></div>
+              <div><label class="label">ملاحظة (اختياري)</label><input class="input" maxlength="500" x-model="create.note"></div>
+              <p class="field-err" x-show="create.error" x-text="create.error"></p>
+            </div>
+            <div class="modal-foot"><button type="button" class="btn btn-outline" @click="create.open = false">إلغاء</button><button type="submit" class="btn btn-primary" :disabled="create.saving">إنشاء</button></div>
+          </form>
+        </div>
+      </div>
+    </template>
+
+    <!-- ============ تفاصيل جلسة ============ -->
+    <template x-if="id">
+      <div class="space-y-5">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="min-w-0">
+            <button type="button" class="mb-1 text-sm text-muted hover:text-brand-600" @click="back()">← كل جلسات الجرد</button>
+            <h1 class="flex flex-wrap items-center gap-2 text-2xl font-bold"><span x-text="'جرد #' + id"></span>
+              <span class="badge" x-show="st" :class="st && STATUS[st.status].cls" x-text="st && STATUS[st.status].label"></span>
+              <span class="code-chip" x-show="st && st.scope" x-text="st && st.scope"></span></h1>
+            <p class="mt-1 truncate text-sm text-muted" x-show="st && st.note" x-text="st && st.note" :title="st && st.note"></p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button type="button" class="btn btn-outline" @click="exportSheet()"><i class="fa-solid fa-file-excel text-green-600"></i>كشف Excel</button>
+            <label class="btn btn-outline cursor-pointer" x-show="editable" x-cloak :class="importing && 'opacity-60'"><i class="fa-solid fa-upload"></i>رفع الكميات
+              <input type="file" class="sr-only" accept=".xlsx" @change="importSheet($event.target.files[0]); $event.target.value = ''" :disabled="importing"></label>
+            <button type="button" class="btn btn-primary" x-show="editable" x-cloak @click="submit()" :disabled="busy">إرسال للمراجعة</button>
+            <button type="button" class="btn btn-outline" x-show="st && st.status === 'review'" x-cloak @click="reopen()" :disabled="busy">رجوع للعدّ</button>
+            <button type="button" class="btn btn-danger" x-show="st && st.status === 'review' && canApprove" x-cloak @click="approve()" :disabled="busy"><i class="fa-solid fa-check-double"></i>اعتماد وتسوية</button>
+            <button type="button" class="btn btn-outline text-red-600" x-show="st && ['draft','counting','review'].includes(st.status)" x-cloak @click="cancel()" :disabled="busy">إلغاء الجرد</button>
+          </div>
+        </div>
+
+        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5" x-show="sum" x-cloak>
+          <div class="card card-pad"><div class="kpi-label">الأسطر</div><div class="text-2xl font-bold tabular-nums" x-text="sum && num(sum.lines_total)"></div><div class="text-xs text-muted" x-text="sum && ('معدود ' + num(sum.counted) + ' · متبقي ' + num(sum.uncounted))"></div></div>
+          <div class="card card-pad"><div class="kpi-label">أسطر فيها فرق</div><div class="text-2xl font-bold tabular-nums" x-text="sum && num(sum.diff_lines)"></div></div>
+          <div class="card card-pad"><div class="kpi-label">زيادة</div><div class="text-2xl font-bold tabular-nums text-brand-600" x-text="sum && ('+' + num(sum.surplus_qty))"></div></div>
+          <div class="card card-pad"><div class="kpi-label">عجز</div><div class="text-2xl font-bold tabular-nums text-red-600" x-text="sum && ('−' + num(sum.shortage_qty))"></div></div>
+          <div class="card card-pad" x-show="canFinance && sum && sum.net_value != null"><div class="kpi-label">أثر الفروقات بأسعار البيع</div><div class="text-2xl font-bold tabular-nums" x-text="sum && sum.net_value != null ? money(sum.net_value) : '—'"></div></div>
+        </div>
+
+        <div class="rounded-xl border border-amber-200 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200" x-show="st && st.status === 'review'" x-cloak>
+          راجع الفروقات (فلتر «فيها فرق»). عند الاعتماد بيتطبّق الفرق (المعدود − لقطة النظام) على الرصيد الحالي لكل مكان، والأسطر اللي ماتعدّتش بتفضل زي ما هي. لو أي سطر هيخلّي الرصيد سالب أو أقل من المحجوز الاعتماد بيترفض ومفيش حاجة بتتغير.
+        </div>
+
+        <section class="card card-pad" x-show="importErrors" x-cloak>
+          <h2 class="mb-2 text-sm font-bold text-red-600" x-text="importErrors ? 'أخطاء الاستيراد (' + importErrors.total + ')' : ''"></h2>
+          <div class="max-h-60 overflow-auto rounded-xl border border-line"><table class="tbl"><thead><tr><th class="w-20">الصف</th><th class="w-40">العمود</th><th>المشكلة</th></tr></thead>
+            <tbody><template x-for="(e, i) in (importErrors ? importErrors.rows : [])" :key="i"><tr><td class="tabular-nums" x-text="e.row"></td><td x-text="e.column || '—'"></td><td class="whitespace-normal text-red-700 dark:text-red-300" x-text="e.message"></td></tr></template></tbody></table></div>
+          <p class="mt-2 text-xs text-muted" x-show="importErrors && importErrors.truncated">اتعرض أول 500 خطأ بس.</p>
+        </section>
+
+        <section class="card">
+          <div class="flex flex-wrap items-center gap-3 border-b border-line p-4">
+            <div class="relative min-w-0 flex-1 basis-60"><i class="fa-solid fa-magnifying-glass pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-sm text-muted"></i>
+              <input type="search" class="input ps-10" placeholder="اسم / SKU / باركود" x-model="f.search" @input.debounce.350ms="apply()" aria-label="بحث"></div>
+            <label class="flex items-center gap-2 text-sm"><input type="checkbox" class="accent-brand-500" x-model="f.diff" @change="apply()">فيها فرق</label>
+            <label class="flex items-center gap-2 text-sm"><input type="checkbox" class="accent-brand-500" x-model="f.uncounted" @change="apply()">لسه ماتعدّتش</label>
+            <button type="button" class="btn btn-outline btn-sm" x-show="editable" x-cloak @click="add.open = !add.open">+ صنف لقيته</button>
+            <button type="button" class="btn btn-primary btn-sm" x-show="editable && dirtyCount" x-cloak @click="save()" :disabled="saving"><i class="fa-solid fa-floppy-disk"></i><span x-text="'حفظ العدّ (' + dirtyCount + ')'"></span></button>
+          </div>
+
+          <div class="grid gap-3 border-b border-line bg-soft/60 p-4 sm:grid-cols-4" x-show="add.open && editable" x-cloak>
+            <div class="sm:col-span-2"><label class="label">الصنف</label><ui-select source="products" placeholder="ابحث عن صنف" @pick="add.product = $event.detail.value"></ui-select></div>
+            <div><label class="label">المكان (داخل نطاق الجرد)</label><ui-select source="leaf-locations" placeholder="المكان" @pick="add.location = 'l:' + $event.detail.value"></ui-select></div>
+            <div><label class="label">الكمية</label><div class="flex gap-2"><input type="number" class="input" min="0" step="any" x-model="add.qty"><button type="button" class="btn btn-primary" @click="addLine()">إضافة</button></div></div>
+            <p class="field-err sm:col-span-4" x-show="add.error" x-text="add.error"></p>
+          </div>
+
+          <div class="overflow-x-auto px-3 pt-3" :class="loading && 'opacity-60'">
+            <table class="tbl">
+              <thead><tr><th>الصنف</th><th>المكان</th><th>بالنظام</th><th>المعدود</th><th>الفرق</th><th x-show="canFinance" x-cloak>قيمة الفرق</th></tr></thead>
+              <tbody>
+                <template x-for="l in lines" :key="l.line_id">
+                  <tr>
+                    <td class="max-w-[260px]"><div class="truncate font-medium" x-text="l.product_name" :title="l.product_name"></div><div class="truncate text-xs text-muted" x-text="l.sku || l.barcode || ''"></div></td>
+                    <td><loc-code :code="l.location_code"></loc-code></td>
+                    <td class="tabular-nums" x-text="num(l.system_qty)"></td>
+                    <td class="w-36"><input type="number" class="input h-9" min="0" step="any" inputmode="decimal" :value="shown(l)" :disabled="!editable" @input="setCount(l, $event.target.value)" :aria-label="'الكمية المعدودة ' + l.product_name"></td>
+                    <td class="font-bold tabular-nums" :class="diffCls(l)" x-text="diffOf(l) === null ? '—' : (diffOf(l) > 0 ? '+' : '') + num(diffOf(l))"></td>
+                    <td class="tabular-nums" x-show="canFinance" x-cloak x-text="l.diff_value != null ? money(l.diff_value) : '—'"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div class="empty" x-show="!loading && !lines.length && !error" x-cloak><i class="fa-solid fa-clipboard-list mb-3 text-4xl opacity-40"></i>مفيش أسطر مطابقة</div>
+            <div class="empty" x-show="error" x-cloak><p class="mb-3 text-red-500" x-text="error"></p><button type="button" class="btn btn-outline btn-sm" @click="load()">إعادة المحاولة</button></div>
+          </div>
+          <div class="border-t border-line px-4"><ui-pager :page="page" :pages="pages" :total="total" :size="size" @go="go($event.detail)"></ui-pager></div>
+        </section>
+      </div>
+    </template>
+  </div>
+</div>
+
+<script type="module" src="js/layout.js"></script>
+<script type="module" src="js/stocktake.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
+</body>
+</html>

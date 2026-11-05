@@ -2,7 +2,7 @@
 //  reports.js — التقارير المتقدمة (أدمن): كل تبويب بيتحمّل لما تفتحه (lazy) وبيتحدّث لما تغيّر الفترة.
 // =====================================================================
 import { api, qs } from "./api.js";
-import { num, money, pct, compact, fmtDateTime, errMsg, toast, downloadCsv } from "./utils.js";
+import { num, money, pct, compact, fmtDateTime, errMsg, toast, downloadCsv, ellipsize, wrapLines } from "./utils.js";
 
 const TABS = [
   { key: "overview", label: "نظرة عامة", icon: "fa-gauge-high" },
@@ -41,9 +41,9 @@ const CSV = {
   abc: { name: "abc", cols: [["الصنف", "name"], ["SKU", "sku"], ["الفئة", "class"], ["الكمية", "quantity"], ["القيمة", "value"], ["النسبة %", "share_pct"], ["التراكمي %", "cumulative_pct"]] },
   dead: { name: "dead-stock", cols: [["الصنف", "name"], ["SKU", "sku"], ["الرصيد", "quantity"], ["الوحدة", "unit"], ["السعر", "price"], ["القيمة", "value"], ["أيام من آخر صادر", "days_since_last_out"]] },
   coverage: { name: "reorder", cols: [["الصنف", "name"], ["SKU", "sku"], ["الرصيد", "quantity"], ["متوسط الصرف/يوم", "avg_daily"], ["أيام الكفاية", "days_of_cover"], ["الحالة", "status"], ["الكمية المقترحة للطلب", "suggested_order"], ["الوحدة", "unit"]] },
-  margin: { name: "margin", cols: [["الصنف", "name"], ["SKU", "sku"], ["الكمية المباعة", "quantity"], ["الإيراد", "revenue"], ["متوسط التكلفة", "avg_cost"], ["الربح", "profit"], ["الهامش %", "margin_pct"]] },
+  margin: { name: "margin", cols: [["الصنف", "name"], ["SKU", "sku"], ["الكمية المباعة", "quantity"], ["صافي الإيراد بعد الخصم", "revenue"], ["متوسط التكلفة", "avg_cost"], ["الربح", "profit"], ["الهامش %", "margin_pct"]] },
   prices: { name: "price-variance", cols: [["الصنف", "name"], ["أقل سعر", "min_price"], ["أعلى سعر", "max_price"], ["آخر سعر", "last_price"], ["التذبذب %", "spread_pct"], ["أرخص مورد", "best_supplier"], ["التوفير المحتمل", "potential_saving"]] },
-  employees: { name: "employees", cols: [["المستخدم", "username"], ["فواتير وارد", "in_invoices"], ["كمية وارد", "in_qty"], ["فواتير صادر", "out_invoices"], ["كمية صادر", "out_qty"], ["نقل", "transfers"], ["تعديلات", "adjustments"], ["إجمالي العمليات", "operations"]] },
+  employees: { name: "employees", cols: [["المستخدم", "username"], ["إذونات إضافة", "in_invoices"], ["كمية وارد", "in_qty"], ["إذونات صرف", "out_invoices"], ["كمية صادر", "out_qty"], ["نقل", "transfers"], ["تعديلات", "adjustments"], ["إجمالي العمليات", "operations"]] },
   adjustments: { name: "adjustments", cols: [["الصنف", "name"], ["قبل", "old_quantity"], ["بعد", "new_quantity"], ["الفرق", "difference"], ["الأثر المالي", "value_impact"], ["بواسطة", "user"], ["السبب", "reason"], ["التاريخ", "date"], ["مشتبه", "flagged"]] },
 };
 
@@ -137,8 +137,8 @@ document.addEventListener("alpine:init", () => {
     get kpiCards() {
       const k = this.kpis; if (!k) return [];
       return [
-        { label: "قيمة المخزون الحالية", value: money(k.stock_value), sub: "بأسعار المنتجات", icon: "fa-vault", tone: "bg-brand-500/10 text-brand-600" },
-        { label: "قيمة الصادر", value: money(k.out_value), sub: `آخر ${k.days} يوم · ${num(k.out_qty)} قطعة`, icon: "fa-arrow-up", tone: "bg-orange-500/10 text-orange-600" },
+        { label: "قيمة المخزون بأسعار البيع", value: money(k.stock_value), sub: "سعر البيع × الكمية (مش تكلفة)", icon: "fa-vault", tone: "bg-brand-500/10 text-brand-600" },
+        { label: "صافي مبيعات الفترة", value: money(k.out_value), sub: `قبل الخصم ${money(k.out_gross_value)}${k.out_discount_value > 0 ? ` · خصم ${money(k.out_discount_value)}` : ""}${k.tax_collected > 0 ? ` · ضريبة ${money(k.tax_collected)}` : ""} · ${num(k.out_qty)} قطعة`, icon: "fa-arrow-up", tone: "bg-orange-500/10 text-orange-600" },
         { label: "قيمة الوارد", value: money(k.in_value), sub: `آخر ${k.days} يوم`, icon: "fa-arrow-down", tone: "bg-emerald-500/10 text-emerald-600" },
         { label: "معدل دوران المخزون", value: k.turnover != null ? `${num(k.turnover, 2)}×` : "—", sub: k.days_of_inventory != null ? `المخزون بيكفي ~${num(k.days_of_inventory, 0)} يوم` : "مفيش صادر كفاية", icon: "fa-arrows-rotate", tone: "bg-blue-500/10 text-blue-600" },
         { label: "مخزون راكد", value: money(k.dead_stock_value), sub: `${num(k.dead_stock_count)} صنف · ${pct(k.dead_stock_pct)} من المخزون`, icon: "fa-box-archive", tone: "bg-amber-500/10 text-amber-600" },
@@ -183,12 +183,12 @@ document.addEventListener("alpine:init", () => {
       const a = this.d.abc; if (!a) return;
       const c = colors(); const top = a.chart;
       makeChart("abc", this.$refs.abcCanvas, {
-        data: { labels: top.map((i) => (i.name.length > 14 ? i.name.slice(0, 14) + "…" : i.name)), datasets: [
+        data: { labels: top.map((i) => ellipsize(i.name, 14)), datasets: [
           { type: "bar", label: "النسبة %", data: top.map((i) => i.share_pct), backgroundColor: top.map((i) => (i.class === "A" ? IN_COLOR : i.class === "B" ? "#3B82F6" : "#94A3B8")), borderRadius: 4, yAxisID: "y" },
           { type: "line", label: "التراكمي %", data: top.map((i) => i.cumulative_pct), borderColor: OUT_COLOR, backgroundColor: OUT_COLOR, tension: 0.3, pointRadius: 3, yAxisID: "y1" },
         ] },
         options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
-          plugins: { legend: { position: "top", align: "end", labels: { usePointStyle: true, boxWidth: 8, color: c.tick } }, tooltip: { ...tooltip, callbacks: { label: (x) => ` ${x.dataset.label}: ${pct(x.parsed.y)}` } } },
+          plugins: { legend: { position: "top", align: "end", labels: { usePointStyle: true, boxWidth: 8, color: c.tick } }, tooltip: { ...tooltip, callbacks: { title: (x) => wrapLines(top[x[0].dataIndex].name, 28), label: (x) => ` ${x.dataset.label}: ${pct(x.parsed.y)}` } } },
           scales: { x: { grid: { display: false }, ticks: { color: c.tick, maxRotation: 60, minRotation: 40, font: { size: 10 } } }, y: { beginAtZero: true, grid: { color: c.grid, borderDash: [4, 4] }, ticks: { color: c.tick, callback: (v) => v + "%" } }, y1: { position: "right", min: 0, max: 100, grid: { display: false }, ticks: { color: c.tick, callback: (v) => v + "%" } } } },
       });
     },
@@ -199,9 +199,9 @@ document.addEventListener("alpine:init", () => {
       const ds = (label, key, color) => ({ label, data: items.map((i) => i[key]), backgroundColor: color, borderRadius: 3, maxBarThickness: 36 });
       makeChart("emp", this.$refs.empCanvas, {
         type: "bar",
-        data: { labels: items.map((i) => i.username), datasets: [ds("فواتير وارد", "in_invoices", IN_COLOR), ds("فواتير صادر", "out_invoices", OUT_COLOR), ds("نقل", "transfers", "#3B82F6"), ds("تعديلات", "adjustments", "#8B5CF6")] },
+        data: { labels: items.map((i) => ellipsize(i.username, 12)), datasets: [ds("مستندات وارد", "in_invoices", IN_COLOR), ds("مستندات صادر", "out_invoices", OUT_COLOR), ds("نقل", "transfers", "#3B82F6"), ds("تعديلات", "adjustments", "#8B5CF6")] },
         options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
-          plugins: { legend: { position: "top", align: "end", labels: { usePointStyle: true, boxWidth: 8, color: c.tick } }, tooltip },
+          plugins: { legend: { position: "top", align: "end", labels: { usePointStyle: true, boxWidth: 8, color: c.tick } }, tooltip: { ...tooltip, callbacks: { title: (x) => wrapLines(items[x[0].dataIndex].username, 28) } } },
           scales: { x: { stacked: true, grid: { display: false }, ticks: { color: c.tick } }, y: { stacked: true, beginAtZero: true, grid: { color: c.grid, borderDash: [4, 4] }, ticks: { color: c.tick, precision: 0 } } } },
       });
     },

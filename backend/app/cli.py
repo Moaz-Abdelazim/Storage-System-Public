@@ -4,7 +4,7 @@
     python -m app.cli migrate         # alembic upgrade head - الطريقة الوحيدة لإنشاء/تحديث الجداول في production
     python -m app.cli init-db         # ينشئ الجداول - للتطوير والاختبار فقط (مرفوض في production)
     python -m app.cli cleanup         # يمسح سجلات الدخول ومحاولات الدخول القديمة (retention) - جرّب --dry-run الأول
-    python -m app.cli check-stock     # يفحص تطابق إجمالي كل منتج مع مجموع أماكنه (exit 1 لو فيه فرق)
+    python -m app.cli check-stock     # يفحص تطابق إجمالي كل منتج مع مجموع أماكنه + تطابق المحجوز مع إذونات الحجز (exit 1 لو فيه فرق)
     python -m app.cli create-admin    # ينشئ حساب أدمن (بيسأل عن الباسورد، مفيش باسورد في env ولا في الأوامر)
 
 أمثلة:
@@ -133,6 +133,19 @@ def check_stock(db) -> list:
     negatives = db.query(PL.product_id, PL.location_id, PL.quantity).filter(PL.quantity < 0).all()
     for pid, lid, qty in negatives:
         problems.append({"product_id": pid, "name": f"رصيد سالب في الموقع #{lid}", "product_quantity": None, "locations_sum": float(qty)})
+    # الحجوزات: المحجوز المخزّن لكل (منتج، مكان) لازم = مجموع أسطر إذونات الصرف اللي حالتها reserved (ومينفعش يزيد عن الفعلي)
+    OI, OV = models.StockOutItem, models.StockOutInvoice
+    expected = {
+        (pid, lid): round(float(q or 0), 3)
+        for pid, lid, q in db.query(OI.product_id, OI.location_id, func.sum(OI.quantity))
+        .join(OV, OV.id == OI.invoice_id).filter(OV.status == "reserved", OI.location_id.isnot(None))
+        .group_by(OI.product_id, OI.location_id).all()
+    }
+    stored = {(pid, lid): (round(float(res or 0), 3), float(qty or 0)) for pid, lid, res, qty in db.query(PL.product_id, PL.location_id, PL.reserved, PL.quantity).all()}
+    for key in sorted(set(expected) | {k for k, (r, _q) in stored.items() if r}):
+        got, qty = stored.get(key, (0.0, 0.0))
+        if got != expected.get(key, 0.0) or got > qty + 0.0005:
+            problems.append({"product_id": key[0], "name": f"حجز غير مطابق في الموقع #{key[1]}", "product_quantity": expected.get(key, 0.0), "locations_sum": got})
     return problems
 
 

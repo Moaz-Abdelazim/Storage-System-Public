@@ -37,14 +37,16 @@ PERMISSIONS: Dict[str, PermissionDef] = dict([
     _p("catalog.manage", "إضافة/تعديل التصنيفات والماركات", "التصنيفات والماركات"),
     _p("catalog.delete", "حذف التصنيفات والماركات", "التصنيفات والماركات", "catalog.manage"),
     # ---- المخزون والفواتير ----
-    _p("stock_in.create", "تسجيل وارد (إذن إضافة)", "المخزون والفواتير"),
-    _p("stock_out.create", "تسجيل صادر (إذن صرف)", "المخزون والفواتير"),
-    _p("stock_out.manage_held", "إتمام/تعديل/مسح الفواتير المعلّقة", "المخزون والفواتير", "stock_out.create", "invoices.view"),
-    _p("stock_out.discount", "تطبيق خصم/ضريبة على الصادر", "المخزون والفواتير", "stock_out.create"),
-    _p("invoices.view", "عرض الفواتير وسجل الحركات", "المخزون والفواتير"),
-    _p("invoices.print", "طباعة المستندات", "المخزون والفواتير", "invoices.view"),
-    _p("invoices.void", "إلغاء الفواتير", "المخزون والفواتير", "invoices.view"),
-    _p("finance.view", "رؤية القيم المالية (أسعار الشراء، الإجماليات، قيمة المخزون)", "المخزون والفواتير"),
+    _p("stock_in.create", "تسجيل وارد (إذن إضافة)", "المخزون والمستندات"),
+    _p("stock_out.create", "صرف مباشر (إذن صرف)", "المخزون والمستندات"),
+    _p("stock_out.quote", "إنشاء وتعديل عروض الأسعار", "المخزون والمستندات", "invoices.view"),
+    _p("stock_out.reserve", "حجز الكميات (تحويل عرض لحجز، تعديل الحجز وفكّه)", "المخزون والمستندات", "stock_out.quote"),
+    _p("stock_out.complete", "إتمام إذن الصرف المحجوز", "المخزون والمستندات", "stock_out.reserve"),
+    _p("stock_out.discount", "تطبيق خصم/ضريبة على إذن الصرف", "المخزون والمستندات", "invoices.view"),
+    _p("invoices.view", "عرض المستندات وسجل الحركات", "المخزون والمستندات"),
+    _p("invoices.print", "طباعة المستندات", "المخزون والمستندات", "invoices.view"),
+    _p("invoices.void", "إلغاء المستندات (وارد وصادر)", "المخزون والمستندات", "invoices.view"),
+    _p("finance.view", "رؤية القيم المالية (أسعار الشراء، الإجماليات، قيمة المخزون)", "المخزون والمستندات"),
     # ---- المواقع والتحويلات ----
     _p("locations.view", "عرض المخازن والمواقع", "المواقع والتحويلات"),
     _p("locations.manage", "إضافة/تعديل المخازن والمواقع", "المواقع والتحويلات", "locations.view"),
@@ -73,9 +75,11 @@ PERMISSIONS: Dict[str, PermissionDef] = dict([
 ALL_KEYS: Set[str] = set(PERMISSIONS)
 
 # مجموعات any-of المشتركة
-PRODUCT_READ = ("products.view", "stock_in.create", "stock_out.create", "transfers.create", "stocktake.manage")
-LOCATION_READ = ("locations.view", "stock_in.create", "stock_out.create", "transfers.create", "transfers.view",
-                 "products.create", "products.adjust", "stocktake.manage")
+PRODUCT_READ = ("products.view", "stock_in.create", "stock_out.create", "stock_out.quote", "stock_out.reserve",
+                "transfers.create", "stocktake.manage")
+LOCATION_READ = ("locations.view", "stock_in.create", "stock_out.create", "stock_out.quote", "stock_out.reserve",
+                 "transfers.create", "transfers.view", "products.create", "products.adjust", "stocktake.manage")
+OUT_CREATE = ("stock_out.create", "stock_out.quote", "stock_out.reserve")  # أي طريقة لإنشاء إذن صرف
 
 
 def label_of(key: str) -> str:
@@ -211,19 +215,24 @@ _add("/api/suppliers", {
 })
 _add("/api/recipients", {
     "GET ": (ALL, ("recipients.view",)),
-    "GET /lookup": (ANY, ("recipients.view", "stock_out.create")),
-    "POST ": (ANY, ("recipients.manage", "stock_out.create")),
+    "GET /lookup": (ANY, ("recipients.view",) + OUT_CREATE),
+    "POST ": (ANY, ("recipients.manage",) + OUT_CREATE),
     "PUT /{item_id}": (ALL, ("recipients.manage",)),
     "DELETE /{item_id}": (ALL, ("recipients.delete",)),
 })
 
 _add("/api/stock", {
     "POST /in": (ALL, ("stock_in.create",)),
-    "POST /out": (ALL, ("stock_out.create",)),
-    "PUT /out/{invoice_id}": (ALL, ("stock_out.manage_held",)),
-    "POST /out/{invoice_id}/complete": (ALL, ("stock_out.manage_held",)),
-    "DELETE /out/{invoice_id}": (ALL, ("stock_out.manage_held",)),
-    "GET /out/{invoice_id}/edit-data": (ALL, ("stock_out.manage_held",)),
+    "POST /in/{invoice_id}/void": (ALL, ("invoices.void",)),
+    # إنشاء إذن صرف: الحالة المطلوبة (quote/reserved/completed) ليها صلاحيتها الخاصة وبتتفحص جوه الـ handler
+    "POST /out": (ANY, OUT_CREATE),
+    "PUT /out/{invoice_id}": (ANY, ("stock_out.quote", "stock_out.reserve")),
+    "POST /out/{invoice_id}/reserve": (ALL, ("stock_out.reserve",)),
+    "POST /out/{invoice_id}/release": (ALL, ("stock_out.reserve",)),
+    "POST /out/{invoice_id}/complete": (ALL, ("stock_out.complete",)),
+    "POST /out/{invoice_id}/void": (ANY, ("invoices.void", "stock_out.quote", "stock_out.reserve")),
+    "POST /out/{invoice_id}/recreate": (ALL, ("invoices.void", "stock_out.quote")),
+    "GET /out/{invoice_id}/edit-data": (ANY, ("stock_out.quote", "stock_out.reserve")),
     "GET /in": (ALL, ("invoices.view",)),
     "GET /in/{invoice_id}": (ALL, ("invoices.view",)),
     "GET /out": (ALL, ("invoices.view",)),
@@ -295,5 +304,27 @@ _add("/api/company", {
     "DELETE /logo": (ALL, ("settings.company",)),
 })
 
+_add("/api/stocktakes", {
+    "GET ": (ALL, ("stocktake.manage",)),
+    "POST ": (ALL, ("stocktake.manage",)),
+    "GET /{stocktake_id}": (ALL, ("stocktake.manage",)),
+    "PUT /{stocktake_id}/counts": (ALL, ("stocktake.manage",)),
+    "POST /{stocktake_id}/lines": (ALL, ("stocktake.manage",)),
+    "POST /{stocktake_id}/submit": (ALL, ("stocktake.manage",)),
+    "POST /{stocktake_id}/reopen": (ALL, ("stocktake.manage",)),
+    "POST /{stocktake_id}/cancel": (ALL, ("stocktake.manage",)),
+    "GET /{stocktake_id}/export": (ALL, ("stocktake.manage",)),
+    "POST /{stocktake_id}/import": (ALL, ("stocktake.manage",)),
+    "POST /{stocktake_id}/approve": (ALL, ("stocktake.approve",)),
+})
+
+_add("/api/settings", {
+    "GET /public-url": (ALL, ("settings.company",)),
+    "PUT /public-url": (ALL, ("settings.company",)),
+})
+
+ENDPOINT_PERMS["GET /api/setup/status"] = (P, ())
+ENDPOINT_PERMS["POST /api/setup"] = (P, ())
+ENDPOINT_PERMS["GET /api/audit-log"] = (A, ())
 ENDPOINT_PERMS["GET /api/health"] = (P, ())
 ENDPOINT_PERMS["GET /api/ready"] = (P, ())

@@ -83,7 +83,9 @@ class LoginLog(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # ممكن يبقى NULL لو الحساب اتمسح بعدين
     username = Column(String(50), nullable=True)  # نسخة من الاسم وقت الدخول - تفضل موجودة حتى لو الحساب اتمسح
     login_time = Column(DateTime, default=now_cairo)
-    logout_time = Column(DateTime, nullable=True)  # لو مليان يبقى الجلسة دي مقفولة (خروج عادي أو إغلاق من الأدمن)
+    logout_time = Column(DateTime, nullable=True)  # وقت انتهاء الجلسة (خروج/إنهاء/انتهاء صلاحية). فاضي = لسه مفتوحة (ما لم يعدّي expires_at)
+    expires_at = Column(DateTime, nullable=True)   # وقت انتهاء صلاحية التوكن (login_time + مدة التوكن) - بتحدد حالة "منتهية" من غير ما نعتمد على logout_time
+    end_reason = Column(String(20), nullable=True)  # logout / expired / revoked (أدمن) / system - انظر services/sessions.py
     ip_address = Column(String(50), nullable=True)
     closed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # لو أدمن هو اللي قفلها بالقوة
 
@@ -170,8 +172,9 @@ class Product(Base):
 
 
 class StockInInvoice(Base):
-    """فاتورة وارد - ممكن تحتوي على أكتر من منتج في نفس العملية."""
+    """إذن إضافة (وارد) - ممكن يحتوي على أكتر من منتج. الحالات: completed / voided بس (مفيش held ولا حجز في الوارد)."""
     __tablename__ = "stock_in_invoices"
+    __table_args__ = (CheckConstraint("status IN ('completed', 'voided')", name="status_valid"),)
 
     id = Column(Integer, primary_key=True, index=True)
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=True)
@@ -179,9 +182,17 @@ class StockInInvoice(Base):
     received_by_username = Column(String(50), nullable=True)  # نسخة من اسمه وقت التسجيل - بتفضل موجودة دايمًا
     date = Column(DateTime, default=now_cairo)
     notes = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="completed", server_default="completed", index=True)
+    # مفتاح منع التكرار (UUID من الواجهة): نفس المفتاح = نفس المستند (انظر services/idempotency)
+    idempotency_key = Column(String(36), nullable=True)
+    voided_at = Column(DateTime, nullable=True)
+    voided_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    voided_by_username = Column(String(50), nullable=True)
+    void_reason = Column(String(500), nullable=True)
 
     supplier = relationship("Supplier", back_populates="stock_in_invoices")
-    received_by = relationship("User")
+    received_by = relationship("User", foreign_keys=[received_by_id])
+    voided_by = relationship("User", foreign_keys=[voided_by_id])
     items = relationship("StockInItem", back_populates="invoice", cascade="all, delete-orphan")
 
 
@@ -202,31 +213,47 @@ class StockInItem(Base):
 
 
 class StockOutInvoice(Base):
-    """فاتورة صادر - ممكن تحتوي على أكتر من منتج في نفس العملية."""
+    """
+    إذن صرف. الدورة: quote (عرض سعر: مفيش تأثير على المخزون) ← reserved (حجز: بيقلّل المتاح بس) ← completed (صرف فعلي)،
+    ومسار جانبي voided (ملغاة، السجل بيفضل). رقم المستند = id.
+    """
     __tablename__ = "stock_out_invoices"
+    __table_args__ = (
+        CheckConstraint("status IN ('quote', 'reserved', 'completed', 'voided')", name="status_valid"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     recipient_id = Column(Integer, ForeignKey("recipients.id"), nullable=True)
-    delivered_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # مين سلم (ممكن يبقى NULL لو اتمسح)
+    delivered_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # مين أنشأ/سلّم (ممكن يبقى NULL لو اتمسح)
     delivered_by_username = Column(String(50), nullable=True)  # نسخة من اسمه وقت التسجيل - بتفضل موجودة دايمًا
+    # date = تاريخ المستند؛ بيتحدّث لوقت التنفيذ لما الحجز يتحوّل لـ completed (عشان التقارير وسجل الحركة يعكسوا الصرف الفعلي)
     date = Column(DateTime, default=now_cairo)
+    created_at = Column(DateTime, default=now_cairo)
+    completed_at = Column(DateTime, nullable=True)
     notes = Column(Text, nullable=True)
 
-    # حالة الفاتورة: completed (مقفولة) / held (معلّقة: الكمية اتخصمت من المخزون وممكن تتعدّل أو تتمسح أو تتقفل)
-    status = Column(String(20), nullable=False, default="completed", server_default="completed")
-    # خصم/ضريبة على إجمالي الفاتورة (اختياريين): النوع amount (مبلغ ثابت) أو percent (نسبة %) + القيمة
+    status = Column(String(20), nullable=False, default="completed", server_default="completed", index=True)
+    idempotency_key = Column(String(36), nullable=True)
+    voided_at = Column(DateTime, nullable=True)
+    voided_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    voided_by_username = Column(String(50), nullable=True)
+    void_reason = Column(String(500), nullable=True)
+    copied_from_id = Column(Integer, ForeignKey("stock_out_invoices.id"), nullable=True)  # "إلغاء وإعادة إنشاء": المستند الأصلي
+
+    # خصم/ضريبة على إجمالي المستند (اختياريين): الخصم amount (مبلغ) أو percent (نسبة %)، والضريبة نسبة % فقط
     discount_type = Column(String(10), nullable=True)
     discount_value = Column(Numeric(14, 2, asdecimal=False), nullable=True)
     tax_type = Column(String(10), nullable=True)
     tax_value = Column(Numeric(14, 2, asdecimal=False), nullable=True)
-    # الإجماليات المحسوبة وقت الحفظ (NULL في الفواتير القديمة - بتتحسب من الأصناف وقت العرض)
+    # الإجماليات المحسوبة وقت الحفظ: subtotal (قبل الخصم) - discount = صافي القيمة، + tax = grand_total
     subtotal_amount = Column(Numeric(14, 2, asdecimal=False), nullable=True)
     discount_amount = Column(Numeric(14, 2, asdecimal=False), nullable=True)
     tax_amount = Column(Numeric(14, 2, asdecimal=False), nullable=True)
     grand_total = Column(Numeric(14, 2, asdecimal=False), nullable=True)
 
     recipient = relationship("Recipient", back_populates="stock_out_invoices")
-    delivered_by = relationship("User")
+    delivered_by = relationship("User", foreign_keys=[delivered_by_id])
+    voided_by = relationship("User", foreign_keys=[voided_by_id])
     items = relationship("StockOutItem", back_populates="invoice", cascade="all, delete-orphan")
 
 
@@ -314,12 +341,16 @@ class ProductLocation(Base):
     __table_args__ = (
         UniqueConstraint("product_id", "location_id", name="uq_product_location"),
         CheckConstraint("quantity >= 0", name="quantity_nonneg"),
+        CheckConstraint("reserved >= 0", name="reserved_nonneg"),
+        CheckConstraint("reserved <= quantity", name="reserved_within_qty"),  # الحجز عمره ما يتخطى الرصيد الفعلي
     )
 
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
     location_id = Column(Integer, ForeignKey("locations.id"), nullable=False, index=True)
-    quantity = Column(Qty(), nullable=False, default=0.0)
+    quantity = Column(Qty(), nullable=False, default=0.0)  # on_hand: الرصيد الفعلي في المكان
+    # الكمية المحجوزة في المكان ده لإذونات صرف حالتها reserved (مش بتنقص الرصيد الفعلي). available = quantity - reserved
+    reserved = Column(Qty(), nullable=False, default=0.0, server_default="0")
 
     product = relationship("Product", back_populates="locations")
     location = relationship("Location")
@@ -371,6 +402,77 @@ class CompanySettings(Base):
     updated_at = Column(DateTime, default=now_cairo, onupdate=now_cairo)
 
 
+class AuditLog(Base):
+    """سجل تدقيق (بيتكتب جوه نفس الـ transaction بتاع العملية). user_id من غير FK عشان مسح مستخدم ما يتعارضش مع السجل."""
+    __tablename__ = "audit_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    at = Column(DateTime, nullable=False, default=now_cairo, index=True)
+    user_id = Column(Integer, nullable=True)
+    username = Column(String(50), nullable=True)
+    ip = Column(String(64), nullable=True)
+    entity_type = Column(String(40), nullable=False)
+    entity_id = Column(String(64), nullable=True)
+    action = Column(String(40), nullable=False)
+    summary = Column(Text, nullable=True)  # JSON مختصر (قبل/بعد) بالعربي
+
+    __table_args__ = (Index("ix_audit_log_entity", "entity_type", "entity_id"),)
+
+
+class AppSetting(Base):
+    """إعدادات عامة key/value (PUBLIC_BASE_URL، وعلامة اكتمال الإعداد الأول)."""
+    __tablename__ = "app_settings"
+
+    key = Column(String(64), primary_key=True)
+    value = Column(Text, nullable=True)
+    updated_by_id = Column(Integer, nullable=True)
+    updated_by_username = Column(String(50), nullable=True)
+    updated_at = Column(DateTime, default=now_cairo, onupdate=now_cairo)
+
+
+class Stocktake(Base):
+    """جلسة جرد: draft ← counting ← review ← approved (أو cancelled). التسوية بتحصل وقت الاعتماد بس."""
+    __tablename__ = "stocktakes"
+    __table_args__ = (
+        CheckConstraint("status IN ('draft', 'counting', 'review', 'approved', 'cancelled')", name="status_valid"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    warehouse_id = Column(Integer, ForeignKey("warehouses.id"), nullable=True)
+    location_id = Column(Integer, ForeignKey("locations.id"), nullable=True)
+    status = Column(String(20), nullable=False, default="draft", server_default="draft", index=True)
+    note = Column(String(500), nullable=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_by_username = Column(String(50), nullable=True)
+    created_at = Column(DateTime, default=now_cairo)
+    approved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    approved_by_username = Column(String(50), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+
+    lines = relationship("StocktakeLine", back_populates="stocktake", cascade="all, delete-orphan")
+
+
+class StocktakeLine(Base):
+    __tablename__ = "stocktake_lines"
+    __table_args__ = (
+        UniqueConstraint("stocktake_id", "product_id", "location_id", name="uq_stocktake_line"),
+        CheckConstraint("system_qty >= 0", name="system_nonneg"),
+        CheckConstraint("counted_qty IS NULL OR counted_qty >= 0", name="counted_nonneg"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    stocktake_id = Column(Integer, ForeignKey("stocktakes.id", ondelete="CASCADE"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    location_id = Column(Integer, ForeignKey("locations.id"), nullable=False)
+    system_qty = Column(Qty(), nullable=False)  # snapshot وقت الإنشاء
+    counted_qty = Column(Qty(), nullable=True)  # NULL = لسه ماتعدّش
+    unit_price = Column(Money(), nullable=True)  # snapshot لسعر بيع المنتج (تقييم الفروقات)
+
+    stocktake = relationship("Stocktake", back_populates="lines")
+    product = relationship("Product")
+    location = relationship("Location")
+
+
 # فهارس أداء للتقارير والسجلات (التواريخ وأعمدة الربط بتتفلتر وتتجمّع عليها كتير) - كانت في migrations.py القديم
 _EXTRA_INDEXES = [
     ("ix_stock_in_invoices_date", StockInInvoice.date),
@@ -384,7 +486,14 @@ _EXTRA_INDEXES = [
     ("ix_quantity_adjustments_date", QuantityAdjustment.date),
     ("ix_quantity_adjustments_product", QuantityAdjustment.product_id),
     ("ix_login_logs_login_time", LoginLog.login_time),
+    ("ix_login_logs_expires_at", LoginLog.expires_at),
 ]
+_UNIQUE_INDEXES = [
+    ("uq_stock_in_invoices_idem", StockInInvoice.idempotency_key),
+    ("uq_stock_out_invoices_idem", StockOutInvoice.idempotency_key),
+]
+for _name, _col in _UNIQUE_INDEXES:
+    Index(_name, _col, unique=True)
 for _name, _col in _EXTRA_INDEXES:
     Index(_name, _col)
 

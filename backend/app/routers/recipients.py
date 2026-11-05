@@ -4,9 +4,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
-from .. import models, schemas, auth
+from .. import models, schemas, auth, permissions
 from ..database import get_db
-from ..query_helpers import contains, page_args, paged
+from ..query_helpers import contains, page_args, paged, valid_invoice
 
 router = APIRouter(prefix="/api/recipients", tags=["Recipients"])
 
@@ -18,7 +18,7 @@ def _aggregates(db: Session, ids):
     rows = (
         db.query(models.StockOutInvoice.recipient_id, func.count(func.distinct(models.StockOutInvoice.id)), func.sum(models.StockOutItem.quantity))
         .join(models.StockOutItem, models.StockOutItem.invoice_id == models.StockOutInvoice.id)
-        .filter(models.StockOutInvoice.recipient_id.in_(ids))
+        .filter(models.StockOutInvoice.recipient_id.in_(ids), valid_invoice(models.StockOutInvoice))
         .group_by(models.StockOutInvoice.recipient_id)
         .all()
     )
@@ -55,7 +55,7 @@ def list_recipients(
     total = q.count()
     rows = q.offset((pg - 1) * size).limit(size).all()
     agg = _aggregates(db, [m.id for m in rows])
-    total_invoices = db.query(func.count(models.StockOutInvoice.id)).filter(models.StockOutInvoice.recipient_id.isnot(None)).scalar() or 0
+    total_invoices = db.query(func.count(models.StockOutInvoice.id)).filter(models.StockOutInvoice.recipient_id.isnot(None), valid_invoice(models.StockOutInvoice)).scalar() or 0
     return paged([_out(m, agg) for m in rows], total, pg, size, total_invoices=total_invoices)
 
 
@@ -64,7 +64,7 @@ def lookup_recipients(
     q: str = "",
     limit: int = 20,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.require_any_permission("recipients.view", "stock_out.create")),
+    current_user: models.User = Depends(auth.require_any_permission("recipients.view", *permissions.OUT_CREATE)),
 ):
     """بحث سريع وخفيف للقوايم المنسدلة (أقصى 50 نتيجة)."""
     M = models.Recipient
@@ -78,7 +78,7 @@ def lookup_recipients(
 def create_recipient(
     payload: schemas.RecipientCreate,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.require_any_permission("recipients.manage", "stock_out.create")),
+    current_user: models.User = Depends(auth.require_any_permission("recipients.manage", *permissions.OUT_CREATE)),
 ):
     recipient = models.Recipient(**payload.model_dump())
     db.add(recipient)
@@ -94,7 +94,7 @@ def _aggregate_one(db: Session, entity_id: int):
     row = (
         db.query(func.count(func.distinct(models.StockOutInvoice.id)), func.sum(models.StockOutItem.quantity))
         .join(models.StockOutItem, models.StockOutItem.invoice_id == models.StockOutInvoice.id)
-        .filter(models.StockOutInvoice.recipient_id == entity_id)
+        .filter(models.StockOutInvoice.recipient_id == entity_id, valid_invoice(models.StockOutInvoice))
         .first()
     )
     return (row[0] or 0, row[1] or 0) if row else (0, 0)
@@ -141,5 +141,5 @@ def delete_recipient(
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(status_code=400, detail="الجهة دي مرتبطة بفواتير صادر سابقة، مينفعش تتحذف.")
+        raise HTTPException(status_code=400, detail="الجهة دي مرتبطة بإذونات صرف سابقة، مينفعش تتحذف.")
     return {"message": "تم الحذف"}

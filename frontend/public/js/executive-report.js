@@ -6,7 +6,7 @@
 import { api, qs } from "./api.js";
 import { guard } from "./auth.js";
 import { API_BASE } from "./config.js";
-import { getQuery, setQuery, todayISO } from "./utils.js";
+import { getQuery, setQuery, todayISO, applyDataStyles } from "./utils.js";
 
 const $ = (s) => document.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -109,7 +109,7 @@ function yoyChart(months) {
 // ---------- جداول وأجزاء ----------
 function table(cols, rows, empty = "مفيش بيانات") {
   if (!rows.length) return `<div class="empty">${empty}</div>`;
-  return `<table class="t"><colgroup>${cols.map((c) => `<col style="width:${c.w}">`).join("")}</colgroup>
+  return `<table class="t"><colgroup>${cols.map((c) => `<col data-s="width:${c.w}">`).join("")}</colgroup>
     <thead><tr>${cols.map((c) => `<th>${c.h}</th>`).join("")}</tr></thead>
     <tbody>${rows.map((r, i) => `<tr>${cols.map((c) => `<td class="${c.k || ""}">${c.f(r, i)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
@@ -121,7 +121,7 @@ const chg = (c) => {
 };
 const sec = (n, title, body, small = "") => `<section class="sec"><h2><span>${n}) ${title}</span>${small ? `<small>${small}</small>` : ""}</h2>${body}</section>`;
 const kpi = (l, v, s = "") => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s || "&nbsp;"}</div></div>`;
-const legend = (items) => `<div class="legend">${items.map(([css, t]) => `<span><i style="${css}"></i>${t}</span>`).join("")}</div>`;
+const legend = (items) => `<div class="legend">${items.map(([css, t]) => `<span><i data-s="${css}"></i>${t}</span>`).join("")}</div>`;
 const label = (key, group) => (group === "month" ? `${key.slice(5)}/${key.slice(2, 4)}` : `${key.slice(8)}/${key.slice(5, 7)}`);
 
 // ---------- بناء الصفحات ----------
@@ -138,24 +138,24 @@ function page1(d) {
   const k = d.kpis, c = d.trend.compare, dead = d.dead, a = d.abc;
   const kp = `<div class="kpis">
     ${kpi("إجمالي القطع في المخزون", N(num(k.total_pieces)), "كل الأصناف المفعّلة")}
-    ${kpi("قيمة المخزون", money(k.stock_value), "الكمية × سعر الصنف")}
+    ${kpi("قيمة المخزون بأسعار البيع", money(k.stock_value), "الكمية × سعر الصنف")}
     ${kpi("عدد الأصناف", N(num(k.products_count)), "الأصناف المفعّلة")}
     ${kpi("تحت الحد الأدنى", N(num(k.low_stock_count)), `منها نفد تمامًا: ${N(num(k.out_of_stock_count))}`)}
-    ${kpi("وارد الفترة", money(k.in.value), `${N(k.in.invoices)} فاتورة · ${N(num(k.in.qty))} قطعة · ${chg(c.in_value)}`)}
-    ${kpi("صادر الفترة", money(k.out.value), `${N(k.out.invoices)} فاتورة · ${N(num(k.out.qty))} قطعة · ${chg(c.out_value)}`)}
+    ${kpi("وارد الفترة", money(k.in.value), `${N(k.in.invoices)} مستند · ${N(num(k.in.qty))} قطعة · ${chg(c.in_value)}`)}
+    ${kpi("صافي مبيعات الفترة (بعد الخصم)", money(k.out.value), `${N(k.out.invoices)} إذن صرف · ${N(num(k.out.qty))} قطعة · ${chg(c.out_value)}`)}
     ${kpi("حركات النقل بين المواقع", N(num(k.transfers.count)), `${N(num(k.transfers.qty))} قطعة · ${chg(c.transfers)}`)}
     ${kpi("المخزون الراكد (مجمّد)", money(dead.total_value), `${N(dead.count)} صنف · ${N(dead.pct_of_stock + "%")} من القيمة`)}
-  </div><div class="s" style="font-size:7.8pt;margin-top:1mm">النسب بجانب الوارد/الصادر/النقل مقارنة بالفترة السابقة بنفس الطول (${N(dmy(d.period.prev_start))} ← ${N(dmy(d.period.prev_end))}).</div>`;
+  </div><div class="s" data-s="font-size:7.8pt;margin-top:1mm">النسب بجانب الوارد/الصادر/النقل مقارنة بالفترة السابقة بنفس الطول (${N(dmy(d.period.prev_start))} ← ${N(dmy(d.period.prev_end))}).</div>`;
 
   const s = a.summary, tv = a.basis === "quantity" ? Object.values(s).reduce((x, y) => x + y.qty, 0) : a.total_value;
   const cls = (L, name) => {
     const x = s[L], v = a.basis === "quantity" ? x.qty : x.value;
     return `<div><b>${L}</b> — ${name}<br>${N(x.count)} صنف · ${a.basis === "quantity" ? N(num(x.qty)) + " قطعة" : money(x.value)}<br><span class="num">${tv ? (v / tv * 100).toFixed(1) : "0.0"}%</span> من ${a.basis === "quantity" ? "كمية" : "قيمة"} المبيعات</div>`;
   };
-  const abcBody = `<div class="cols" style="grid-template-columns:1.9fr 1fr;align-items:start">
+  const abcBody = `<div class="cols" data-s="grid-template-columns:1.9fr 1fr;align-items:start">
       <div>${pareto(a.chart, a.basis)}${legend([[`background:${C.a}`, "فئة A (حتى 80%)"], [`background:${C.b}`, "فئة B (حتى 95%)"], [`background:${C.c}`, "فئة C"], [`background:${C.line};height:.7mm;vertical-align:1mm`, "الخط = النسبة التراكمية"]])}</div>
-      <div class="sum3" style="grid-template-columns:1fr;margin:0">${cls("A", "الأهم")}${cls("B", "المتوسط")}${cls("C", "الأقل")}</div></div>
-    <div class="chart-t">أهم 15 صنف (الأساس: ${a.basis === "quantity" ? "الكمية المباعة" : "قيمة المبيعات"})</div>
+      <div class="sum3" data-s="grid-template-columns:1fr;margin:0">${cls("A", "الأهم")}${cls("B", "المتوسط")}${cls("C", "الأقل")}</div></div>
+    <div class="chart-t">أهم 15 صنف (الأساس: ${a.basis === "quantity" ? "الكمية المباعة" : "صافي قيمة المبيعات"})</div>
     ${table([
       { h: "#", w: "7mm", k: "c", f: (r) => r.rank }, { h: "الصنف", w: "auto", f: (r) => esc(r.name) }, { h: "فئة", w: "10mm", k: "c cls", f: (r) => r.class },
       { h: "الكمية", w: "20mm", k: "n", f: (r) => num(r.quantity) }, { h: "القيمة (ج.م)", w: "28mm", k: "n", f: (r) => m2(r.value) },
@@ -174,17 +174,17 @@ function page2(d) {
   const party = (rows, what) => table([{ h: "#", w: "6mm", k: "c", f: (r, i) => i + 1 }, { h: what, w: "auto", f: (r) => esc(r.name) }, { h: "الكمية", w: "17mm", k: "n", f: (r) => num(r.quantity) }, { h: "القيمة (ج.م)", w: "25mm", k: "n", f: (r) => m2(r.value) }], rows.slice(0, 7), "مفيش حركة في الفترة");
   const partiesBody = `<div class="cols"><div><div class="chart-t">أفضل الموردين (وارد)</div>${party(d.top_suppliers, "المورد")}</div><div><div class="chart-t">أفضل الجهات المستلمة (صادر)</div>${party(d.top_recipients, "الجهة")}</div></div>`;
   let whBody;
-  if (!W.show) whBody = `<div class="empty">مخزن واحد فقط — قيمة المخزون كلها: ${money(d.kpis.stock_value)}</div>`;
+  if (!W.show) whBody = `<div class="empty">مخزن واحد فقط — قيمة المخزون بأسعار البيع كلها: ${money(d.kpis.stock_value)}</div>`;
   else {
     let rows = [...W.items].sort((a, b) => b.value - a.value);
     const extra = rows.slice(6); rows = rows.slice(0, 6);
     if (extra.length) rows.push({ name: `مخازن أخرى (${extra.length})`, code: "", value: extra.reduce((s, x) => s + x.value, 0), quantity: extra.reduce((s, x) => s + x.quantity, 0), pct_value: +extra.reduce((s, x) => s + x.pct_value, 0).toFixed(1), other: true });
     if (W.unassigned) rows.push({ name: "غير موزّع على مواقع", code: "", ...W.unassigned, hatch: true });
-    const bar = (r) => `<div class="hb"><span class="hb-l">${r.code ? esc(r.code) + " — " : ""}${esc(r.name)}</span><span class="hb-bar"><i class="${r.hatch || r.other ? "hatch" : ""}" style="width:${Math.min(100, r.pct_value)}%"></i></span><span class="hb-v">${N(r.pct_value + "%")} · ${money(r.value)}</span></div>`;
+    const bar = (r) => `<div class="hb"><span class="hb-l">${r.code ? esc(r.code) + " — " : ""}${esc(r.name)}</span><span class="hb-bar"><i class="${r.hatch || r.other ? "hatch" : ""}" data-s="width:${Math.min(100, r.pct_value)}%"></i></span><span class="hb-v">${N(r.pct_value + "%")} · ${money(r.value)}</span></div>`;
     whBody = rows.map(bar).join("");
   }
   return sec(3, "المخزون الراكد", deadBody, `بدون صادر آخر ${N(dead.window_days)} يوم`) + sec(4, "أصناف تحت الحد الأدنى", lowBody, `الإجمالي ${N(num(ls.count))} صنف · أكبر 15 عجزًا`)
-    + sec(5, "أفضل الموردين والجهات المستلمة", partiesBody) + sec(6, "قيمة المخزون لكل مخزن", whBody);
+    + sec(5, "أفضل الموردين والجهات المستلمة", partiesBody) + sec(6, "قيمة المخزون بأسعار البيع لكل مخزن", whBody);
 }
 
 function page3(d) {
@@ -193,24 +193,24 @@ function page3(d) {
   const cmpBox = (l, cur, cm, isMoney) => `<div><div class="l">${l}</div><div class="v">${isMoney ? money(cur) : N(num(cur))}</div><div class="s">${chg(cm)} · السابقة: ${isMoney ? money(cm.previous) : N(num(cm.previous))}</div></div>`;
   const plabel = (s) => (g === "week" ? `أسبوع يبدأ ${N(dmy(s.period))}` : `شهر ${N(s.period.slice(5) + "/" + s.period.slice(0, 4))}`);
   const pk = t.peak && t.trough && (t.peak.out_value > 0 || t.trough.out_value > 0)
-    ? `<div class="note" style="margin:0 0 1.5mm"><b>أعلى ${unit} صادر:</b> ${plabel(t.peak)} — ${money(t.peak.out_value)} (${N(num(t.peak.out_qty))} قطعة) &nbsp;|&nbsp; <b>أقل ${unit} صادر:</b> ${plabel(t.trough)} — ${money(t.trough.out_value)} (${N(num(t.trough.out_qty))} قطعة)</div>` : "";
+    ? `<div class="note" data-s="margin:0 0 1.5mm"><b>أعلى ${unit} صادر:</b> ${plabel(t.peak)} — ${money(t.peak.out_value)} (${N(num(t.peak.out_qty))} قطعة) &nbsp;|&nbsp; <b>أقل ${unit} صادر:</b> ${plabel(t.trough)} — ${money(t.trough.out_value)} (${N(num(t.trough.out_qty))} قطعة)</div>` : "";
   const hasPartial = t.series.some((s) => s.partial);
   let yoyHtml = "";
   if (t.yoy.available) {
     const ms = t.yoy.months, done = ms.filter((m) => m.change_pct != null && !m.partial);
     const best = done.length ? done.reduce((a, b) => (b.change_pct > a.change_pct ? b : a)) : null, worst = done.length ? done.reduce((a, b) => (b.change_pct < a.change_pct ? b : a)) : null;
-    yoyHtml = `<div class="chart-t">مقارنة قيمة الصادر الشهري بنفس الشهر في السنة السابقة (آخر 12 شهر)</div>${yoyChart(ms)}
+    yoyHtml = `<div class="chart-t">مقارنة صافي مبيعات الشهر بنفس الشهر في السنة السابقة (آخر 12 شهر)</div>${yoyChart(ms)}
       ${legend([[`background:${C.out}`, "الشهر الحالي"], [`background:${C.outSoft}`, "نفس الشهر السنة السابقة"]])}
-      ${best ? `<div style="font-size:8.6pt;margin-top:.8mm">أكبر زيادة: شهر ${N(best.month.slice(5) + "/" + best.month.slice(0, 4))} (${N("+" + best.change_pct + "%")}) · أكبر نقص: شهر ${N(worst.month.slice(5) + "/" + worst.month.slice(0, 4))} (${N(worst.change_pct + "%")}) ${ms.some((m) => m.partial) ? " · * شهر ناقص" : ""}</div>` : ""}`;
+      ${best ? `<div data-s="font-size:8.6pt;margin-top:.8mm">أكبر زيادة: شهر ${N(best.month.slice(5) + "/" + best.month.slice(0, 4))} (${N("+" + best.change_pct + "%")}) · أكبر نقص: شهر ${N(worst.month.slice(5) + "/" + worst.month.slice(0, 4))} (${N(worst.change_pct + "%")}) ${ms.some((m) => m.partial) ? " · * شهر ناقص" : ""}</div>` : ""}`;
   }
   const alerts = t.stockout_alerts.length ? `<div class="note"><b>تنبيه نفاد:</b> أصناف فئة A كميتها الحالية صفر أو قريبة منه — ركود الصادر ممكن يكون سببه نفاد الصنف مش قلة الطلب: ${t.stockout_alerts.slice(0, 6).map((a) => `${esc(a.name)} (${N(num(a.quantity))})`).join("، ")}${t.stockout_alerts.length > 6 ? ` و${N(t.stockout_alerts.length - 6)} أصناف أخرى` : ""}.</div>` : "";
-  const body = `<div class="cmp">${cmpBox("قيمة الصادر", d.kpis.out.value, c.out_value, true)}${cmpBox("كمية الصادر", d.kpis.out.qty, c.out_qty, false)}${cmpBox("قيمة الوارد", d.kpis.in.value, c.in_value, true)}${cmpBox("كمية الوارد", d.kpis.in.qty, c.in_qty, false)}</div>
+  const body = `<div class="cmp">${cmpBox("صافي مبيعات (بعد الخصم)", d.kpis.out.value, c.out_value, true)}${cmpBox("كمية الصادر", d.kpis.out.qty, c.out_qty, false)}${cmpBox("قيمة الوارد", d.kpis.in.value, c.in_value, true)}${cmpBox("كمية الوارد", d.kpis.in.qty, c.in_qty, false)}</div>
     ${pk}
     <div class="chart-t">الصادر عبر الزمن (تجميع ${g === "week" ? "أسبوعي" : "شهري"})</div>${barLine({ cats: cats("out_value", "out_qty"), barColor: C.out })}
-    ${legend([[`background:${C.out}`, "قيمة الصادر (ج.م) — المحور الأيسر"], [`background:${C.line};height:.7mm;vertical-align:1mm`, "كمية الصادر — المحور الأيمن (الخط)"]])}
+    ${legend([[`background:${C.out}`, "صافي قيمة الصرف بعد الخصم (ج.م) — المحور الأيسر"], [`background:${C.line};height:.7mm;vertical-align:1mm`, "كمية الصادر — المحور الأيمن (الخط)"]])}
     <div class="chart-t">الوارد عبر الزمن</div>${barLine({ cats: cats("in_value", "in_qty"), barColor: C.inn })}
     ${legend([[`background:${C.inn}`, "قيمة الوارد (ج.م)"], [`background:${C.line};height:.7mm;vertical-align:1mm`, "كمية الوارد (الخط)"]])}
-    ${hasPartial ? `<div style="font-size:7.8pt;margin-top:.6mm">* الأعمدة المهشّرة = ${unit} ناقص (بداية أو نهاية الفترة) ولا يدخل في أعلى/أقل ${unit}.</div>` : ""}
+    ${hasPartial ? `<div data-s="font-size:7.8pt;margin-top:.6mm">* الأعمدة المهشّرة = ${unit} ناقص (بداية أو نهاية الفترة) ولا يدخل في أعلى/أقل ${unit}.</div>` : ""}
     ${yoyHtml}
     ${t.seasonality_note ? `<div class="note"><b>ملاحظة:</b> ${esc(t.seasonality_note)}</div>` : ""}${alerts}`;
   return sec(7, "اتجاه الحركة عبر الزمن", body, `المقارنة مع الفترة السابقة بنفس الطول`);
@@ -219,6 +219,7 @@ function page3(d) {
 function render(d, company) {
   const pages = [page1, page2, page3];
   $("#sheets").innerHTML = pages.map((fn, i) => `<section class="sheet">${header(d, company, i === 0)}${fn(d)}<div class="pgno"><span>تقرير تنفيذي للإدارة</span><span>صفحة ${N(i + 1)} من ${N(pages.length)}</span></div></section>`).join("");
+  applyDataStyles($("#sheets"));
   const over = [...document.querySelectorAll(".sheet")].some((s) => s.scrollHeight > s.clientHeight + 1);
   document.body.dataset.overflow = over ? "1" : "0";
   document.body.dataset.ready = "1";

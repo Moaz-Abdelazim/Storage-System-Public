@@ -20,7 +20,8 @@ from sqlalchemy.orm import Session
 from .. import models, auth
 from ..database import get_db
 from ..timezone_utils import now_cairo
-from .analytics import _abc_legacy, _abc_sql, _dead_base, _dead_summary, _f, _in_price, _out_price, _supports_window
+from ..query_helpers import join_valid, valid_invoice
+from .analytics import _abc_legacy, _abc_sql, _dead_base, _dead_summary, _f, _in_price, _out_net, _supports_window
 
 router = APIRouter(prefix="/api/analytics", tags=["Executive Report"], dependencies=[Depends(auth.require_permission("reports.view", "finance.view"))])
 
@@ -103,12 +104,12 @@ def _is_partial(key: str, group: str, start: datetime, end: datetime) -> bool:
     return first < start.date() or datetime.combine(first + timedelta(days=7), datetime.min.time()) > end
 
 
-def _series(db: Session, inv, item, price, start, end, group: str) -> Dict[str, tuple]:
-    """{مفتاح الفترة: (كمية، قيمة، عدد فواتير)} - الفاتورة بتقع في فترة واحدة بس (حسب تاريخها)."""
+def _series(db: Session, inv, item, value, start, end, group: str) -> Dict[str, tuple]:
+    """{مفتاح الفترة: (كمية، قيمة، عدد مستندات)} - مستندات completed بس. قيمة الصادر = صافي بعد توزيع الخصم (من غير ضريبة)."""
     expr = _bucket_expr(db, inv.date, group)
     rows = (
-        db.query(expr, func.coalesce(func.sum(item.quantity), 0), func.coalesce(func.sum(item.quantity * price), 0), func.count(distinct(inv.id)))
-        .select_from(item).join(inv, inv.id == item.invoice_id).join(P, P.id == item.product_id)
+        db.query(expr, func.coalesce(func.sum(item.quantity), 0), func.coalesce(func.sum(value), 0), func.count(distinct(inv.id)))
+        .select_from(item).join(inv, join_valid(inv, item)).join(P, P.id == item.product_id)
         .filter(inv.date >= start, inv.date < end).group_by(expr).all()
     )
     return {_bucket_key(r[0], group): (float(r[1]), float(r[2]), int(r[3])) for r in rows}
@@ -118,10 +119,10 @@ def _pct_change(cur: float, prev: float) -> Optional[float]:
     return round((cur - prev) / prev * 100, 1) if prev else None
 
 
-def _window_totals(db: Session, inv, item, price, start, end) -> dict:
+def _window_totals(db: Session, inv, item, value, start, end) -> dict:
     r = (
-        db.query(func.count(distinct(inv.id)), func.coalesce(func.sum(item.quantity), 0), func.coalesce(func.sum(item.quantity * price), 0))
-        .select_from(item).join(inv, inv.id == item.invoice_id).join(P, P.id == item.product_id)
+        db.query(func.count(distinct(inv.id)), func.coalesce(func.sum(item.quantity), 0), func.coalesce(func.sum(value), 0))
+        .select_from(item).join(inv, join_valid(inv, item)).join(P, P.id == item.product_id)
         .filter(inv.date >= start, inv.date < end).one()
     )
     return {"invoices": int(r[0]), "qty": _f(r[1], 3), "value": _f(r[2])}
@@ -132,12 +133,12 @@ def _from_series(s: Dict[str, tuple]) -> dict:
     return {"invoices": sum(v[2] for v in s.values()), "qty": round(sum(v[0] for v in s.values()), 3), "value": round(sum(v[1] for v in s.values()), 2)}
 
 
-def _top_parties(db: Session, inv, item, price, party_model, fk, start, end, limit: int = 10) -> list:
-    value = func.coalesce(func.sum(item.quantity * price), 0)
+def _top_parties(db: Session, inv, item, line_value, party_model, fk, start, end, limit: int = 10) -> list:
+    value = func.coalesce(func.sum(line_value), 0)
     qty = func.coalesce(func.sum(item.quantity), 0)
     rows = (
         db.query(party_model.name, func.count(distinct(inv.id)), qty, value)
-        .select_from(item).join(inv, inv.id == item.invoice_id).join(P, P.id == item.product_id)
+        .select_from(item).join(inv, join_valid(inv, item)).join(P, P.id == item.product_id)
         .outerjoin(party_model, party_model.id == fk)
         .filter(inv.date >= start, inv.date < end).group_by(fk, party_model.name)
         .order_by(value.desc(), qty.desc()).limit(limit).all()
@@ -167,10 +168,19 @@ def executive_report(
 
     # 2+3) الاتجاه عبر الزمن: صادر ووارد مجمّعين بالأسبوع/الشهر في SQL (استعلامين، وبنحسب منهم إجماليات الفترة الحالية)،
     #      وإجماليات الفترة السابقة (استعلامين)، والنقل (استعلام). الفترات الفاضية بتتحط بصفر في الشارت.
-    out_s = _series(db, OutInv, OutItem, _out_price(), start, end, group)
-    in_s = _series(db, InInv, InItem, _in_price(), start, end, group)
-    out_mv = {"cur": _from_series(out_s), "prev": _window_totals(db, OutInv, OutItem, _out_price(), prev_start, start)}
-    in_mv = {"cur": _from_series(in_s), "prev": _window_totals(db, InInv, InItem, _in_price(), prev_start, start)}
+    in_value = InItem.quantity * _in_price()
+    out_s = _series(db, OutInv, OutItem, _out_net(), start, end, group)
+    in_s = _series(db, InInv, InItem, in_value, start, end, group)
+    out_mv = {"cur": _from_series(out_s), "prev": _window_totals(db, OutInv, OutItem, _out_net(), prev_start, start)}
+    in_mv = {"cur": _from_series(in_s), "prev": _window_totals(db, InInv, InItem, in_value, prev_start, start)}
+    # تفصيل مبيعات الفترة من المستندات نفسها (completed بس): قبل الخصم / الخصومات / الصافي / الضريبة / الإجمالي
+    sums = db.query(
+        func.coalesce(func.sum(OutInv.subtotal_amount), 0), func.coalesce(func.sum(OutInv.discount_amount), 0),
+        func.coalesce(func.sum(OutInv.tax_amount), 0), func.coalesce(func.sum(OutInv.grand_total), 0),
+    ).filter(valid_invoice(OutInv), OutInv.date >= start, OutInv.date < end).one()
+    gross_s, disc_s, tax_s, grand_s = (round(float(x or 0), 2) for x in sums)
+    out_mv["cur"].update({"gross_sales": gross_s, "discounts": disc_s, "net_sales": round(gross_s - disc_s, 2),
+                          "tax_collected": tax_s, "grand_total": grand_s})
     T = models.LocationTransfer
     cur_t, prv_t = and_(T.date >= start, T.date < end), and_(T.date >= prev_start, T.date < start)
     tr = db.query(
@@ -208,7 +218,7 @@ def executive_report(
     # 5) الراكد: ملخص (استعلامين) + أكبر 10 أصناف (استعلام)
     dead_days = max(7, min(n_days, 730))
     dead = _dead_summary(db, dead_days)
-    ever_out = exists().where(OutItem.product_id == P.id).label("ever")
+    ever_out = exists().where(and_(OutItem.product_id == P.id, OutItem.invoice_id == OutInv.id, valid_invoice(OutInv))).label("ever")
     dead_rows = (
         _dead_base(db, dead_days)
         .with_entities(P.id, P.name, P.sku, P.unit, P.quantity, P.price, (P.quantity * P.price).label("value"), ever_out)
@@ -223,8 +233,8 @@ def executive_report(
     )
 
     # 7) أفضل الموردين والجهات المستلمة (استعلامين)
-    suppliers = _top_parties(db, InInv, InItem, _in_price(), models.Supplier, InInv.supplier_id, start, end)
-    recipients = _top_parties(db, OutInv, OutItem, _out_price(), models.Recipient, OutInv.recipient_id, start, end)
+    suppliers = _top_parties(db, InInv, InItem, in_value, models.Supplier, InInv.supplier_id, start, end)
+    recipients = _top_parties(db, OutInv, OutItem, _out_net(), models.Recipient, OutInv.recipient_id, start, end)
 
     # 8) قيمة المخزون لكل مخزن (استعلام): كل المخازن حتى اللي فاضية
     W, L, PL = models.Warehouse, models.Location, models.ProductLocation
@@ -247,7 +257,8 @@ def executive_report(
                       "pct_value": round(max(stock_value - placed_val, 0) / base * 100, 1)}
 
     # 9) عمق البيانات (استعلام) + مقارنة نفس الشهر في السنة السابقة لو البيانات 12 شهر أو أكتر (استعلام)
-    first = db.query(func.min(OutInv.date)).scalar(), db.query(func.min(InInv.date)).scalar()  # استعلامين صغيرين (فهرس التاريخ)
+    first = (db.query(func.min(OutInv.date)).filter(valid_invoice(OutInv)).scalar(),
+             db.query(func.min(InInv.date)).filter(valid_invoice(InInv)).scalar())  # استعلامين صغيرين (فهرس التاريخ)
     first_dates = [d for d in first if d]
     data_start = min(first_dates) if first_dates else None
     months_of_data = max(0.0, round((end - data_start).days / 30.44, 1)) if data_start else 0.0
@@ -261,7 +272,7 @@ def executive_report(
             y, m = (y - 1, 12) if m == 1 else (y, m - 1)
         cur_months.reverse()
         win_start = datetime(int(cur_months[0][:4]) - 1, int(cur_months[0][5:7]), 1)
-        monthly = _series(db, OutInv, OutItem, _out_price(), win_start, end, "month")
+        monthly = _series(db, OutInv, OutItem, _out_net(), win_start, end, "month")
         for key in cur_months:
             prev_key = f"{int(key[:4]) - 1:04d}-{key[5:7]}"
             prev_exists = data_start is not None and datetime(int(prev_key[:4]), int(prev_key[5:7]), 1) + timedelta(days=31) > data_start
@@ -292,7 +303,8 @@ def executive_report(
                    "prev_start": prev_start.date().isoformat(), "prev_end": (start - timedelta(days=1)).date().isoformat(),
                    "generated_at": now_cairo().isoformat(timespec="seconds")},
         "kpis": {
-            "total_pieces": total_pieces, "stock_value": stock_value, "products_count": int(k[0]),
+            "total_pieces": total_pieces, "stock_value": stock_value,  # قيمة المخزون بأسعار البيع (مش تكلفة)
+            "stock_value_basis": "sale_price", "products_count": int(k[0]),
             "low_stock_count": int(k[3]), "out_of_stock_count": int(k[4]),
             "in": in_mv["cur"], "out": out_mv["cur"], "transfers": {"count": int(tr[0]), "qty": _f(tr[1], 3)},
         },
