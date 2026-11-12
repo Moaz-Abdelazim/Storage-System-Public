@@ -973,6 +973,8 @@ def stock_log(
     row_counts = {"in": 0, "out": 0, "transfer": 0}  # عدد الصفوف المعروضة (للترقيم، بيشمل الملغي لو include_voided)
     values = {"in": 0.0, "out": 0.0}
     out_discount = 0.0
+    out_tax = 0.0
+    out_grand = 0.0
     transfers_qty = 0.0
     branches = []  # كل فرع: select (rk, id, date) مرتّب ومحدود
 
@@ -1004,10 +1006,21 @@ def stock_log(
                     .scalar() or 0
                 )
         else:
-            n, gross, disc = q_valid.with_entities(
-                func.count(Inv.id), func.coalesce(func.sum(Inv.subtotal_amount), 0), func.coalesce(func.sum(Inv.discount_amount), 0)
+            # المستندات القديمة (subtotal/grand_total = NULL): نحسب قبل الخصم من أسطر المستند نفسه، والإجمالي = قبل الخصم - الخصم + الضريبة
+            items_sum = (
+                select(func.coalesce(func.sum(Item.quantity * func.coalesce(Item.unit_price, 0)), 0))
+                .where(Item.invoice_id == Inv.id).correlate(Inv).scalar_subquery()
+            )
+            gross_eff = func.coalesce(Inv.subtotal_amount, items_sum)
+            n, gross, disc, tax, grand = q_valid.with_entities(
+                func.count(Inv.id), func.coalesce(func.sum(gross_eff), 0), func.coalesce(func.sum(Inv.discount_amount), 0),
+                func.coalesce(func.sum(Inv.tax_amount), 0),
+                func.coalesce(func.sum(func.coalesce(
+                    Inv.grand_total, gross_eff - func.coalesce(Inv.discount_amount, 0) + func.coalesce(Inv.tax_amount, 0),
+                )), 0),
             ).one()
             counts[k], values[k], out_discount = int(n or 0), float(gross or 0), float(disc or 0)
+            out_tax, out_grand = float(tax or 0), float(grand or 0)
         if row_counts[k]:
             add_branch(k, q_rows, Inv.id, Inv.date)
 
@@ -1065,7 +1078,9 @@ def stock_log(
                 "total_value": inv.subtotal_amount if inv.subtotal_amount is not None else val,  # قبل الخصم
                 "discount_amount": inv.discount_amount or 0.0,
                 "net_amount": round((inv.subtotal_amount if inv.subtotal_amount is not None else val) - (inv.discount_amount or 0.0), 2),
-                "tax_amount": inv.tax_amount or 0.0, "grand_total": inv.grand_total,
+                "tax_amount": inv.tax_amount or 0.0,
+                "grand_total": inv.grand_total if inv.grand_total is not None else round(
+                    (inv.subtotal_amount if inv.subtotal_amount is not None else val) - (inv.discount_amount or 0.0) + (inv.tax_amount or 0.0), 2),
                 "status": inv.status or "completed", "void_reason": inv.void_reason,
             }
     if ids["transfer"]:
@@ -1092,7 +1107,9 @@ def stock_log(
             "out_invoices_count": counts["out"],
             "out_total_value": round(values["out"], 2),  # إجمالي قيمة الأصناف قبل الخصم (مش "مبيعات")
             "out_discount_total": round(out_discount, 2),
-            "out_net_value": round(values["out"] - out_discount, 2),  # صافي القيمة بعد الخصم
+            "out_net_value": round(values["out"] - out_discount, 2),  # صافي القيمة بعد الخصم (قبل الضريبة)
+            "out_tax_total": round(out_tax, 2),  # إجمالي الضريبة على المستندات الصالحة
+            "out_grand_total": round(out_grand, 2),  # الإجمالي النهائي = الصافي + الضريبة
             "transfers_count": counts["transfer"],
             "transfers_quantity": round(transfers_qty, 3) if counts["transfer"] else 0,  # int لما مفيش حركات (نفس نوع النسخة القديمة)
         },

@@ -258,7 +258,7 @@ _add("/api/reports", {
     "GET /recipient-product-invoices/{recipient_id}/{product_id}": (ALL, ("recipients.view",)),
 })
 
-for _ep in ("abc", "adjustments", "coverage", "dead-stock", "employees", "executive-report", "heatmap", "kpis", "margin",
+for _ep in ("abc", "adjustments", "coverage", "dead-stock", "employees", "executive-report", "heatmap", "kpis", "margin", "stock-valuation", "stocktake-accuracy",
             "price-variance", "trend"):
     ENDPOINT_PERMS[f"GET /api/analytics/{_ep}"] = (ALL, ("reports.view", "finance.view"))
 
@@ -316,6 +316,7 @@ _add("/api/stocktakes", {
     "GET /{stocktake_id}/export": (ALL, ("stocktake.manage",)),
     "POST /{stocktake_id}/import": (ALL, ("stocktake.manage",)),
     "POST /{stocktake_id}/approve": (ALL, ("stocktake.approve",)),
+    "GET /{stocktake_id}/adjustments": (ALL, ("stocktake.manage",)),
 })
 
 _add("/api/settings", {
@@ -327,4 +328,5 @@ ENDPOINT_PERMS["GET /api/setup/status"] = (P, ())
 ENDPOINT_PERMS["POST /api/setup"] = (P, ())
 ENDPOINT_PERMS["GET /api/audit-log"] = (A, ())
 ENDPOINT_PERMS["GET /api/health"] = (P, ())
+ENDPOINT_PERMS["GET /api/app-info"] = (P, ())
 ENDPOINT_PERMS["GET /api/ready"] = (P, ())

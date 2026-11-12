@@ -1,5 +1,6 @@
 // الإعداد الأول (من غير الـ shell): بيشتغل بس لو مفيش أي مستخدم. بعد النجاح بيدخّل الأدمن الجديد ويروح للرئيسية.
 import { api, ApiError } from "./api.js";
+import "./app-info.js"; // اسم المنتج
 import { storeUser } from "./auth.js";
 import { errMsg } from "./utils.js";
 import { toggleTheme } from "./theme.js";

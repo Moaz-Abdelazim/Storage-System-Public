@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <meta name="robots" content="noindex, nofollow">
-  <title>سجل الدخول | مخزني</title>
+  <title>سجل الدخول</title>
   <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
   <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -25,10 +25,10 @@
 
     <section class="card card-pad">
       <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-12">
-        <div class="relative xl:col-span-3"><i class="fa-regular fa-user pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-sm text-muted"></i><input type="search" class="input ps-10" placeholder="اسم المستخدم" x-model="f.user" @input.debounce.350ms="apply()"></div>
-        <div class="relative xl:col-span-2"><i class="fa-solid fa-network-wired pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-sm text-muted"></i><input type="search" class="input ps-10" dir="ltr" placeholder="IP" x-model="f.ip" @input.debounce.350ms="apply()"></div>
-        <div class="seg xl:col-span-3"><template x-for="s in statuses" :key="s.key"><button type="button" class="seg-btn" :class="f.status === s.key && 'seg-btn-on'" @click="f.status = s.key; apply()" x-text="s.label"></button></template></div>
-        <div class="flex items-center gap-2 xl:col-span-4"><input type="date" class="input" x-model="f.date_from" @change="apply()" aria-label="من"><span class="text-muted">←</span><input type="date" class="input" x-model="f.date_to" @change="apply()" aria-label="إلى"></div>
+        <div class="relative xl:col-span-4"><i class="fa-regular fa-user pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-sm text-muted"></i><input type="search" class="input ps-10" placeholder="اسم المستخدم" x-model="f.user" @input.debounce.350ms="apply()"></div>
+        <div class="relative xl:col-span-3"><i class="fa-solid fa-network-wired pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-sm text-muted"></i><input type="search" class="input ps-10" dir="ltr" placeholder="IP" x-model="f.ip" @input.debounce.350ms="apply()"></div>
+        <div class="flex items-center gap-2 md:col-span-2 xl:col-span-5"><input type="date" class="input" x-model="f.date_from" @change="apply()" aria-label="من"><span class="text-muted">←</span><input type="date" class="input" x-model="f.date_to" @change="apply()" aria-label="إلى"></div>
+        <div class="seg max-w-full flex-wrap md:col-span-2 xl:col-span-12 xl:justify-self-start" role="tablist" aria-label="حالة الجلسة"><template x-for="s in statuses" :key="s.key"><button type="button" class="seg-btn" :class="f.status === s.key && 'seg-btn-on'" @click="f.status = s.key; apply()" x-text="s.label"></button></template></div>
       </div>
     </section>
 

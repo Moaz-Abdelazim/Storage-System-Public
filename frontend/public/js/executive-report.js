@@ -5,6 +5,7 @@
 // =====================================================================
 import { api, qs } from "./api.js";
 import { guard } from "./auth.js";
+import { appName, getAppName } from "./app-info.js";
 import { API_BASE } from "./config.js";
 import { getQuery, setQuery, todayISO, applyDataStyles } from "./utils.js";
 
@@ -127,10 +128,10 @@ const label = (key, group) => (group === "month" ? `${key.slice(5)}/${key.slice(
 // ---------- بناء الصفحات ----------
 function header(d, company, first, page, total) {
   const p = d.period, logo = company && company.has_logo ? `<img class="logo" alt="" src="${API_BASE}/api/company/logo?v=${encodeURIComponent(company.logo_version || "")}">` : "";
-  const name = esc((company && company.name) || "مخزني");
+  const name = esc((company && company.name) || appName());
   const when = `طُبع: <span class="num printed-at">${cairoNow()}</span> (توقيت القاهرة)`;
   if (!first) return `<div class="rh small"><div class="t1">${name} — تقرير تنفيذي للإدارة</div><div class="meta">الفترة: ${N(dmy(p.start))} ← ${N(dmy(p.end))}</div></div>`;
-  return `<div class="rh"><div class="co">${logo}<div><div class="t1">${name}</div><div class="t2">تقرير تنفيذي للإدارة — نظام مخزني</div></div></div>
+  return `<div class="rh"><div class="co">${logo}<div><div class="t1">${name}</div><div class="t2">تقرير تنفيذي للإدارة${appName() ? ` — نظام ${esc(appName())}` : ""}</div></div></div>
     <div class="meta"><div>الفترة: ${N(dmy(p.start))} ← ${N(dmy(p.end))} (${N(p.days)} يوم)</div><div>${when}</div><div>التجميع الزمني: ${p.group === "week" ? "أسبوعي" : "شهري"}</div></div></div>`;
 }
 
@@ -246,6 +247,7 @@ async function load() {
   try {
     const [d, c] = await Promise.all([api.get(`/api/analytics/executive-report${qs(params())}`), company ? Promise.resolve(company) : api.get("/api/company").catch(() => null)]);
     company = c;
+    await getAppName(); // اسم المنتج (للعنوان لو مفيش اسم شركة)
     if (document.fonts) await document.fonts.ready;
     st.hidden = true; sheets.hidden = false;
     render(d, company);

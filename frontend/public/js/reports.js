@@ -13,6 +13,7 @@ const TABS = [
   { key: "prices", label: "أسعار الموردين", icon: "fa-tags" },
   { key: "employees", label: "الموظفين", icon: "fa-user-clock" },
   { key: "adjustments", label: "التعديلات", icon: "fa-shield-halved" },
+  { key: "stocktake", label: "دقة الجرد", icon: "fa-clipboard-check" },
 ];
 
 const DAY_NAMES = ["الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]; // weekday() بايثون: الاثنين = 0
@@ -55,7 +56,7 @@ document.addEventListener("alpine:init", () => {
     d: {}, st: {}, err: {}, loadedFor: {}, q: {}, open: {}, busy: false, busyTab: {}, page: {}, size: 10,
     adjFlagged: false, covStatus: "", marginSort: "profit", priceSort: "saving",
     covStatuses: [{ key: "", label: "الكل" }, { key: "critical", label: "حرج" }, { key: "warning", label: "تحذير" }, { key: "ok", label: "آمن" }],
-    kpis: null, trend: null, heat: null, metric: "value", group: "day",
+    kpis: null, valuation: null, accuracy: null, trend: null, heat: null, metric: "value", group: "day",
     metrics: [{ key: "value", label: "القيمة" }, { key: "qty", label: "الكمية" }],
     groups: [{ key: "day", label: "يومي" }, { key: "week", label: "أسبوعي" }, { key: "month", label: "شهري" }],
     dayNames: DAY_NAMES, dayOrder: [5, 6, 0, 1, 2, 3, 4],
@@ -76,7 +77,7 @@ document.addEventListener("alpine:init", () => {
     // ---------- التحميل ----------
     // كل تبويب جدولي بيطلب صفحة واحدة بس من السيرفر (ترقيم + بحث + ترتيب في قاعدة البيانات)
     endpoint(key, extra = {}) {
-      const ep = { abc: "abc", dead: "dead-stock", coverage: "coverage", margin: "margin", prices: "price-variance", employees: "employees", adjustments: "adjustments" }[key];
+      const ep = { abc: "abc", dead: "dead-stock", coverage: "coverage", margin: "margin", prices: "price-variance", employees: "employees", adjustments: "adjustments", stocktake: "stocktake-accuracy" }[key];
       const params = {
         days: key === "coverage" ? Math.min(this.days, 365) : this.days,
         page: this.page[key], page_size: this.size, search: (this.q[key] || "").trim(), ...extra,
@@ -121,12 +122,15 @@ document.addEventListener("alpine:init", () => {
     },
 
     async loadOverview() {
-      const [k, t, h] = await Promise.all([
+      const [k, t, h, v, acc] = await Promise.all([
         api.get(`/api/analytics/kpis?days=${this.days}`, { ttl: 30_000 }),
         api.get(`/api/analytics/trend?days=${this.days}&group=${this.group}`, { ttl: 30_000 }),
         api.get(`/api/analytics/heatmap?days=${this.days}`, { ttl: 30_000 }),
+        // كروت إضافية: لو فشلت مش المفروض تكسر النظرة العامة
+        api.get("/api/analytics/stock-valuation", { ttl: 30_000 }).catch(() => null),
+        api.get(`/api/analytics/stocktake-accuracy?days=${this.days}`, { ttl: 30_000 }).catch(() => null),
       ]);
-      this.kpis = k; this.trend = t; this.heat = h;
+      this.kpis = k; this.trend = t; this.heat = h; this.valuation = v; this.accuracy = acc;
     },
     async loadTrend() {
       try { this.trend = await api.get(`/api/analytics/trend?days=${this.days}&group=${this.group}`, { ttl: 30_000 }); this.drawTrend(); }
@@ -138,11 +142,19 @@ document.addEventListener("alpine:init", () => {
       const k = this.kpis; if (!k) return [];
       return [
         { label: "قيمة المخزون بأسعار البيع", value: money(k.stock_value), sub: "سعر البيع × الكمية (مش تكلفة)", icon: "fa-vault", tone: "bg-brand-500/10 text-brand-600" },
+        ...(this.valuation ? [{
+          label: "قيمة المخزون بالتكلفة", value: money(this.valuation.cost_value), icon: "fa-receipt", tone: "bg-emerald-500/10 text-emerald-600",
+          sub: `آخر سعر شراء · بتغطي ${num(this.valuation.costed_products)} من ${num(this.valuation.products_in_stock)} صنف${this.valuation.uncosted_products ? ` (${num(this.valuation.uncosted_products)} بدون سعر شراء)` : ""}`,
+        }] : []),
         { label: "صافي مبيعات الفترة", value: money(k.out_value), sub: `قبل الخصم ${money(k.out_gross_value)}${k.out_discount_value > 0 ? ` · خصم ${money(k.out_discount_value)}` : ""}${k.tax_collected > 0 ? ` · ضريبة ${money(k.tax_collected)}` : ""} · ${num(k.out_qty)} قطعة`, icon: "fa-arrow-up", tone: "bg-orange-500/10 text-orange-600" },
         { label: "قيمة الوارد", value: money(k.in_value), sub: `آخر ${k.days} يوم`, icon: "fa-arrow-down", tone: "bg-emerald-500/10 text-emerald-600" },
         { label: "معدل دوران المخزون", value: k.turnover != null ? `${num(k.turnover, 2)}×` : "—", sub: k.days_of_inventory != null ? `المخزون بيكفي ~${num(k.days_of_inventory, 0)} يوم` : "مفيش صادر كفاية", icon: "fa-arrows-rotate", tone: "bg-blue-500/10 text-blue-600" },
         { label: "مخزون راكد", value: money(k.dead_stock_value), sub: `${num(k.dead_stock_count)} صنف · ${pct(k.dead_stock_pct)} من المخزون`, icon: "fa-box-archive", tone: "bg-amber-500/10 text-amber-600" },
-        { label: "تحت الحد الأدنى", value: num(k.low_stock_count), sub: `منهم ${num(k.out_of_stock_count)} نفد تمامًا`, icon: "fa-triangle-exclamation", tone: "bg-red-500/10 text-red-600" },
+        { label: "تحت الحد الأدنى", value: num(k.low_stock_count), sub: `${pct(k.low_stock_pct)} من الأصناف النشطة · منهم ${num(k.out_of_stock_count)} نفد تمامًا`, icon: "fa-triangle-exclamation", tone: "bg-red-500/10 text-red-600" },
+        ...(this.accuracy ? [{
+          label: "دقة الجرد", value: this.accuracy.accuracy_pct != null ? pct(this.accuracy.accuracy_pct) : "—", icon: "fa-clipboard-check", tone: "bg-sky-500/10 text-sky-600",
+          sub: this.accuracy.sessions ? `${num(this.accuracy.sessions)} جلسة معتمدة · ${num(this.accuracy.variance_lines)} سطر فيه فرق` : "مفيش جلسات جرد معتمدة في الفترة",
+        }] : []),
         { label: "تعديلات الجرد", value: num(k.adjustments_count), sub: `صافي الأثر ${money(k.adjustments_net_value)}`, icon: "fa-pen-to-square", tone: "bg-violet-500/10 text-violet-600" },
         { label: "فترة التحليل", value: `${k.days} يوم`, sub: "غيّرها من الأعلى", icon: "fa-calendar-days", tone: "bg-slate-500/10 text-slate-600" },
       ];

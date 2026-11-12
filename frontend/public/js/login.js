@@ -1,5 +1,6 @@
 // صفحة تسجيل الدخول (من غير الـ shell)
 import { api, ApiError } from "./api.js";
+import "./app-info.js"; // اسم المنتج
 import { storeUser } from "./auth.js";
 import { getQuery, safeNext } from "./utils.js";
 import { toggleTheme } from "./theme.js";

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <meta name="robots" content="noindex, nofollow">
-  <title>المنتجات | مخزني</title>
+  <title>المنتجات</title>
   <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
   <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -45,6 +45,23 @@
           <select class="select" x-model="filters.status" @change="applyFilters()" aria-label="حالة المنتج">
             <option value="active">المنتجات النشطة</option><option value="inactive">المنتجات المعطّلة</option><option value="all">الكل</option>
           </select>
+        </div>
+        <div class="flex flex-wrap items-center gap-3 md:col-span-2 xl:col-span-12" x-show="canLoc && whs.length" x-cloak>
+          <div class="min-w-[11rem] flex-1 sm:max-w-[15rem]">
+            <select class="select" :value="filters.warehouse_id || ''" @change="setWarehouse($event.target.value)" aria-label="المخزن">
+              <option value="">كل المخازن</option>
+              <template x-for="w in whs" :key="w.id"><option :value="w.id" :selected="filters.warehouse_id === w.id" x-text="w.name && w.name !== w.code ? w.code + ' — ' + w.name : w.code"></option></template>
+            </select>
+          </div>
+          <template x-for="(lv, i) in levels" :key="i + '-' + (i ? levels[i - 1].value : filters.warehouse_id)">
+            <div class="min-w-[11rem] flex-1 sm:max-w-[15rem]">
+              <select class="select" @change="setLevel(i, $event.target.value)" :aria-label="'مستوى الموقع ' + (i + 1)">
+                <option value="" :selected="!lv.value">كل المواقع</option>
+                <template x-for="o in lv.options" :key="o.id"><option :value="o.id" :selected="lv.value === o.id" x-text="o.label"></option></template>
+              </select>
+            </div>
+          </template>
+          <button type="button" class="btn btn-ghost btn-sm" x-show="filters.warehouse_id" x-cloak @click="clearLocation()"><i class="fa-solid fa-xmark"></i>مسح فلتر المكان</button>
         </div>
         <div class="seg md:col-span-2 xl:col-span-12 xl:justify-self-start" role="tablist" aria-label="حالة المخزون">
           <template x-for="s in stockTabs" :key="s.key">
@@ -88,6 +105,7 @@
                   <span class="text-xs text-muted" x-text="p.unit"></span>
                   <div x-show="p.reserved > 0" x-cloak class="text-xs text-amber-600" :title="'محجوز ' + num(p.reserved) + ' · متاح ' + num(p.available)"><i class="fa-solid fa-lock"></i> محجوز <span x-text="num(p.reserved)"></span> · متاح <b x-text="num(p.available)"></b></div>
                   <div x-show="p.unassigned_quantity > 0" class="text-xs text-amber-600" title="كمية من غير مكان تخزين"><i class="fa-solid fa-triangle-exclamation"></i> <span x-text="num(p.unassigned_quantity)"></span> بدون مكان</div>
+                  <div x-show="p.scoped_quantity != null" x-cloak class="text-xs text-brand-600" title="الكمية داخل المخزن/الموقع المختار"><i class="fa-solid fa-location-dot"></i> في النطاق المختار: <b x-text="num(p.scoped_quantity)"></b></div>
                 </td>
                 <td class="tabular-nums" x-text="money(p.price)"></td>
                 <td>

@@ -32,8 +32,9 @@ from .services.audit import current_ip
 from .security import client_ip
 from . import observability
 from .database import engine
+from .project_config import app_description, app_name
 from .routers import auth as auth_router, roles as roles_router
-from .routers import products, suppliers, recipients, stock, reports, excel_io, categories, brands, locations, location_nav, dashboard, analytics, executive_report, company, invoice_print, stocktake, setup, settings as settings_router, audit_log
+from .routers import products, suppliers, recipients, stock, reports, excel_io, categories, brands, locations, location_nav, dashboard, analytics, executive_report, company, invoice_print, stocktake, setup, settings as settings_router, audit_log, app_info
 
 load_dotenv()
 
@@ -42,7 +43,7 @@ IS_PRODUCTION = auth.IS_PRODUCTION
 observability.setup_logging()
 
 app = FastAPI(
-    title="نظام إدارة المخازن - Inventory System",
+    title=f"{app_name()} - {app_description()}" if app_description() else app_name(),
     version="1.1.0",
     docs_url=None if IS_PRODUCTION else "/docs",
     redoc_url=None if IS_PRODUCTION else "/redoc",
@@ -199,6 +200,7 @@ app.include_router(stocktake.router)
 app.include_router(setup.router)
 app.include_router(settings_router.router)
 app.include_router(audit_log.router)
+app.include_router(app_info.router)
 
 @app.get("/api/health")
 def health_check():

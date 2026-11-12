@@ -159,9 +159,10 @@ def kpis(days: int = 90, db: Session = Depends(get_db)):
     out_count = db.query(func.count(P.id)).filter(P.is_active.is_(True), P.quantity <= 0).scalar() or 0
     A = models.QuantityAdjustment
     adj = (
-        db.query(func.count(A.id), func.coalesce(func.sum(A.difference * P.price), 0))
+        db.query(func.count(A.id), func.coalesce(func.sum(func.coalesce(A.value_difference, A.difference * P.price)), 0))
         .select_from(A).join(P, P.id == A.product_id).filter(A.date >= since).first()
     )
+    active_products = db.query(func.count(P.id)).filter(P.is_active.is_(True)).scalar() or 0
     return {
         "days": days, "stock_value": stock_value,  # قيمة المخزون بأسعار البيع (سعر المنتج × الكمية) - مش تكلفة ولا قيمة محاسبية
         "stock_value_basis": "sale_price",
@@ -172,7 +173,9 @@ def kpis(days: int = 90, db: Session = Depends(get_db)):
         "days_of_inventory": round(days / turnover, 1) if turnover else None,
         "dead_stock_count": dead["count"], "dead_stock_value": dead_value,
         "dead_stock_pct": round(dead_value / stock_value * 100, 1) if stock_value > 0 else 0,
-        "low_stock_count": low_count, "out_of_stock_count": out_count,
+        "low_stock_count": low_count, "out_of_stock_count": out_count, "active_products": active_products,
+        "low_stock_pct": round(low_count / active_products * 100, 1) if active_products else 0,  # نسبة الأصناف النشطة اللي رصيدها <= الحد الأدنى
+        "out_of_stock_pct": round(out_count / active_products * 100, 1) if active_products else 0,
         "adjustments_count": adj[0] or 0, "adjustments_net_value": _f(adj[1]),
     }
 
@@ -683,7 +686,7 @@ def adjustments(
     page, page_size = page_args(page, page_size, export=export)
     since = _since(days)
     A = models.QuantityAdjustment
-    value = A.difference * P.price
+    value = func.coalesce(A.value_difference, A.difference * P.price)  # تسويات الجرد: القيمة المحفوظة وقت اللقطة
     flag = and_(func.abs(A.difference) >= 10,
                 func.abs(A.difference) >= 0.2 * case((A.old_quantity > 1, A.old_quantity), else_=1))
 
@@ -721,7 +724,9 @@ def adjustments(
         diff = float(a.difference or 0)
         items.append({
             "id": a.id, "product_id": a.product_id, "name": name, "sku": sku, "old_quantity": _f(a.old_quantity, 3),
-            "new_quantity": _f(a.new_quantity, 3), "difference": _f(diff, 3), "value_impact": round(diff * float(price or 0), 2),
+            "new_quantity": _f(a.new_quantity, 3), "difference": _f(diff, 3),
+            "value_impact": round(float(a.value_difference), 2) if a.value_difference is not None else round(diff * float(price or 0), 2),
+            "location_code": a.location_code, "stocktake_id": a.stocktake_id,
             "user": a.changed_by_username, "reason": a.reason, "date": a.date, "flagged": bool(fl),
         })
     return paged(items, total, page, page_size, days=days, summary=summary, by_user=by_user)
@@ -755,3 +760,140 @@ def heatmap(days: int = 90, db: Session = Depends(get_db)):
     peak = max(((grid[w][h], w, h) for w in range(7) for h in range(24)), default=(0, 0, 0))
     return {"days": days, "total": total, "grid": grid,
             "peak": {"count": peak[0], "weekday": peak[1], "hour": peak[2]} if peak[0] else None}
+
+# =====================================================================
+#  قيمة المخزون: بسعر البيع وبالتكلفة (آخر سعر شراء فعلي) - من غير ما نستنتج تكلفة من سعر البيع
+# =====================================================================
+@router.get("/stock-valuation")
+def stock_valuation(db: Session = Depends(get_db)):
+    """
+    - sale_value: مجموع (سعر البيع الحالي × الرصيد) للمنتجات النشطة.
+    - cost_value: مجموع (آخر سعر شراء × الرصيد) **للمنتجات اللي ليها سعر شراء مسجّل بس** (آخر مستند وارد صالح فيه unit_price > 0).
+      المنتجات اللي ملهاش سعر شراء مش بتتحسب بالتكلفة، وبتتعدّ في uncosted_* عشان الأرقام تبان بتغطي كام منتج فعلًا.
+    - الرصيد المقصود هو الرصيد الكلي الحالي (Product.quantity) للمنتجات النشطة اللي رصيدها > 0.
+    """
+    ranked = (
+        db.query(
+            InItem.product_id.label("product_id"), InItem.unit_price.label("unit_price"),
+            func.row_number().over(
+                partition_by=InItem.product_id, order_by=(InInv.date.desc(), InInv.id.desc(), InItem.id.desc())
+            ).label("rn"),
+        )
+        .select_from(InItem).join(InInv, join_valid(InInv, InItem))
+        .filter(InItem.unit_price.isnot(None), InItem.unit_price > 0)
+        .subquery()
+    )
+    last_cost = select(ranked.c.product_id, ranked.c.unit_price).where(ranked.c.rn == 1).subquery()
+    rows = (
+        db.query(
+            func.count(P.id),
+            func.coalesce(func.sum(P.quantity * P.price), 0),
+            func.coalesce(func.sum(case((last_cost.c.unit_price.isnot(None), P.quantity * last_cost.c.unit_price), else_=0)), 0),
+            func.coalesce(func.sum(case((last_cost.c.unit_price.isnot(None), 1), else_=0)), 0),
+            func.coalesce(func.sum(case((last_cost.c.unit_price.isnot(None), P.quantity * P.price), else_=0)), 0),
+            func.coalesce(func.sum(case((last_cost.c.unit_price.is_(None), P.quantity * P.price), else_=0)), 0),
+        )
+        .select_from(P).outerjoin(last_cost, last_cost.c.product_id == P.id)
+        .filter(P.is_active.is_(True), P.quantity > 0)
+        .first()
+    )
+    products, sale_value, cost_value, costed, costed_sale_value, uncosted_sale_value = rows
+    products, costed = int(products or 0), int(costed or 0)
+    return {
+        "products_in_stock": products,
+        "sale_value": _f(sale_value), "sale_value_basis": "sale_price",
+        "cost_value": _f(cost_value), "cost_value_basis": "last_purchase_price",
+        "costed_products": costed, "uncosted_products": products - costed,
+        "costed_sale_value": _f(costed_sale_value),  # قيمة نفس المنتجات المتكلّفة بسعر البيع (للمقارنة العادلة مع cost_value)
+        "uncosted_sale_value": _f(uncosted_sale_value),
+        "potential_margin": _f(float(costed_sale_value or 0) - float(cost_value or 0)),  # بس على المنتجات المتكلّفة
+        "coverage_pct": round(costed / products * 100, 1) if products else 0,
+    }
+
+
+# =====================================================================
+#  دقة الجرد وفروقاته (الجلسات المعتمدة في الفترة)
+# =====================================================================
+@router.get("/stocktake-accuracy")
+def stocktake_accuracy(days: int = 90, db: Session = Depends(get_db)):
+    """
+    الدقة = الأسطر المعدودة اللي المعدود فيها = لقطة النظام ÷ كل الأسطر المعدودة (في الجلسات **المعتمدة** خلال الفترة).
+    الأسطر اللي ماتعدّتش مش داخلة. القيمة بسعر البيع المحفوظ في السطر وقت إنشاء الجلسة (مش تكلفة).
+    """
+    from ..location_utils import LocationIndex
+
+    days = _period(days)
+    since = _since(days)
+    St, SL = models.Stocktake, models.StocktakeLine
+    sessions = db.query(St).filter(St.status == "approved", St.approved_at >= since).order_by(St.approved_at.desc()).all()
+    ids = [s.id for s in sessions]
+    empty = {"days": days, "sessions": 0, "counted_lines": 0, "accurate_lines": 0, "variance_lines": 0, "accuracy_pct": None,
+             "shortage_qty": 0, "surplus_qty": 0, "shortage_value": 0, "surplus_value": 0, "net_value": 0,
+             "by_session": [], "by_warehouse": [], "by_location": [], "by_user": [], "value_basis": "sale_price"}
+    if not ids:
+        return empty
+
+    diff = SL.counted_qty - SL.system_qty
+    price = func.coalesce(SL.unit_price, 0)
+    counted_ok = SL.counted_qty.isnot(None)
+
+    def agg(group_cols):
+        return (
+            db.query(
+                *group_cols,
+                func.count(SL.id),
+                func.coalesce(func.sum(case((diff == 0, 1), else_=0)), 0),
+                func.coalesce(func.sum(case((diff < 0, -diff), else_=0)), 0),
+                func.coalesce(func.sum(case((diff > 0, diff), else_=0)), 0),
+                func.coalesce(func.sum(case((diff < 0, -diff * price), else_=0)), 0),
+                func.coalesce(func.sum(case((diff > 0, diff * price), else_=0)), 0),
+            )
+            .filter(SL.stocktake_id.in_(ids), counted_ok).group_by(*group_cols)
+        )
+
+    def pack(counted, accurate, short_q, sur_q, short_v, sur_v):
+        counted, accurate = int(counted or 0), int(accurate or 0)
+        return {
+            "counted_lines": counted, "accurate_lines": accurate, "variance_lines": counted - accurate,
+            "accuracy_pct": round(accurate / counted * 100, 1) if counted else None,
+            "shortage_qty": _f(short_q, 3), "surplus_qty": _f(sur_q, 3),
+            "shortage_value": _f(short_v), "surplus_value": _f(sur_v), "net_value": _f(float(sur_v or 0) - float(short_v or 0)),
+        }
+
+    idx = LocationIndex(db)
+    by_session = []
+    sess_by_id = {s.id: s for s in sessions}
+    for row in agg([SL.stocktake_id]).all():
+        s = sess_by_id[row[0]]
+        by_session.append({"id": s.id, "approved_at": s.approved_at, "created_by": s.created_by_username,
+                           "approved_by": s.approved_by_username, **pack(*row[1:])})
+    by_session.sort(key=lambda r: r["id"], reverse=True)
+
+    loc_rows, wh_acc = [], {}
+    for row in agg([SL.location_id]).all():
+        loc = idx.locations.get(row[0])
+        data = pack(*row[1:])
+        loc_rows.append({"location_id": row[0], "location_code": idx.full_code(row[0]) if loc else str(row[0]), **data})
+        if loc:
+            w = wh_acc.setdefault(loc.warehouse_id, [0, 0, 0.0, 0.0, 0.0, 0.0])
+            for i, v in enumerate(row[1:]):
+                w[i] += float(v or 0)
+    by_warehouse = [
+        {"warehouse_id": wid, "warehouse_code": idx.warehouses[wid].code if wid in idx.warehouses else str(wid), **pack(*vals)}
+        for wid, vals in wh_acc.items()
+    ]
+    by_warehouse.sort(key=lambda r: r["warehouse_code"])
+    loc_rows.sort(key=lambda r: abs(r["net_value"]), reverse=True)
+
+    user_acc = {}
+    for b in by_session:
+        u = user_acc.setdefault(b["created_by"] or "—", [0, 0, 0.0, 0.0, 0.0, 0.0, 0])
+        for i, k in enumerate(("counted_lines", "accurate_lines", "shortage_qty", "surplus_qty", "shortage_value", "surplus_value")):
+            u[i] += b[k]
+        u[6] += 1
+    by_user = [{"username": name, "sessions": v[6], **pack(*v[:6])} for name, v in user_acc.items()]
+    by_user.sort(key=lambda r: r["username"])
+
+    total = agg([literal(1)]).first()
+    return {"days": days, "sessions": len(ids), **pack(*total[1:]), "by_session": by_session[:50], "by_warehouse": by_warehouse,
+            "by_location": loc_rows[:20], "by_user": by_user, "value_basis": "sale_price"}

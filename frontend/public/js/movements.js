@@ -7,6 +7,17 @@ import { can } from "./auth.js";
 import { api, qs, download } from "./api.js";
 import { num, money, fmtDateTime, toast, errMsg, KIND, getQuery, setQuery, todayISO, daysAgoISO, docStatus } from "./utils.js";
 
+// قيمة مستند: الصرف = الإجمالي النهائي (بعد الخصم + الضريبة) مع تفصيل تحته لو في خصم/ضريبة، والإضافة = قيمة الأصناف بسعر الشراء.
+// (total_value في الصرف هو الإجمالي قبل الخصم، فمبنعرضوش كـ"القيمة" لوحده عشان ميتلخبطش مع المبلغ المستحق.)
+function valueOf(kind, r) {
+  if (kind !== "out") return { value: money(r.total_value), detail: r.total_value == null ? "" : "بسعر الشراء" };
+  const gross = Number(r.subtotal ?? r.total_value ?? 0), disc = Number(r.discount_amount || 0), tax = Number(r.tax_amount || 0);
+  const grand = r.grand_total != null ? Number(r.grand_total) : Math.round((gross - disc + tax) * 100) / 100;
+  const parts = [];
+  if (disc > 0 || tax > 0) { parts.push(`قبل الخصم ${money(gross)}`); if (disc > 0) parts.push(`خصم ${money(disc)}`); if (tax > 0) parts.push(`ضريبة ${money(tax)}`); }
+  return { value: money(grand), detail: parts.join(" · ") };
+}
+
 function describe(r, i) {
   const meta = KIND[r.kind] || KIND.in;
   if (r.kind === "transfer") {
@@ -14,7 +25,7 @@ function describe(r, i) {
       href: `location-lookup.html#code=${encodeURIComponent(r.from_code || "")}`, from: r.from_code, to: r.to_code, user: r.user_name, date: fmtDateTime(r.date), items: 1, value: "—" };
   }
   return { key: `${r.kind}-${r.invoice_id}`, kind: r.kind, meta, ref: `${r.kind === "in" ? "إذن إضافة" : "إذن صرف"} #${r.invoice_id}`, sub: r.status === "voided" && r.void_reason ? `سبب الإلغاء: ${r.void_reason}` : (r.notes || ""),
-    href: `invoice.html#kind=${r.kind}&id=${r.invoice_id}`, party: r.party_name, user: r.user_name, date: fmtDateTime(r.date), items: r.items_total, value: money(r.total_value),
+    href: `invoice.html#kind=${r.kind}&id=${r.invoice_id}`, party: r.party_name, user: r.user_name, date: fmtDateTime(r.date), items: r.items_total, ...((v) => ({ value: v.value, valueDetail: v.detail }))(valueOf(r.kind, r)),
     status: r.status || "completed" };
 }
 
@@ -24,12 +35,13 @@ function describeDoc(kind, r) {
   return { key: `${kind}-${r.id}`, kind, meta, ref: `${kind === "in" ? "إذن إضافة" : "إذن صرف"} #${r.id}`,
     sub: r.status === "voided" && r.void_reason ? `سبب الإلغاء: ${r.void_reason}` : (r.notes || ""), href: `invoice.html#kind=${kind}&id=${r.id}`,
     party: kind === "in" ? r.supplier_name : r.recipient_name, user: kind === "in" ? r.received_by_name : r.delivered_by_name,
-    date: fmtDateTime(r.date), items: r.items_total, value: money(r.total_value), status: r.status || "completed" };
+    date: fmtDateTime(r.date), items: r.items_total, ...((v) => ({ value: v.value, valueDetail: v.detail }))(valueOf(kind, r)), status: r.status || "completed" };
 }
 
 document.addEventListener("alpine:init", () => {
   window.Alpine.data("movements", () => ({
     num, money,
+    outGrand() { const x = this.totals; return x ? (x.out_grand_total ?? x.out_net_value) : null; },
     rows: [], totals: null, loading: true, error: "", exporting: false,
     page: 1, pages: 1, total: 0, size: 15,
     docStatus,

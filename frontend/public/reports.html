@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <meta name="robots" content="noindex, nofollow">
-  <title>التقارير | مخزني</title>
+  <title>التقارير</title>
   <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
   <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -246,14 +246,44 @@
             <ul class="divide-y divide-line px-4"><template x-for="u in d.adjustments.by_user" :key="u.username"><li class="flex items-center justify-between py-3 text-sm"><span class="font-medium" x-text="u.username"></span><span class="text-end"><span class="block tabular-nums" x-text="u.count + ' تعديل'"></span><span class="block text-xs text-red-600" x-show="u.loss_value > 0" x-text="'عجز ' + money(u.loss_value)"></span></span></li></template></ul>
             <p class="empty !py-8" x-show="!d.adjustments.by_user.length">مفيش تعديلات.</p></div>
           <div class="card xl:col-span-8"><div class="flex flex-wrap items-center gap-2 border-b border-line p-4"><h2 class="me-auto text-base font-bold">سجل التعديلات</h2><input type="search" class="input h-9 w-40 text-[13px]" placeholder="بحث..." x-model="q.adjustments" @input.debounce.350ms="onSearch('adjustments')"><label class="inline-flex cursor-pointer items-center gap-2 text-xs"><input type="checkbox" class="h-4 w-4 accent-brand-500" x-model="adjFlagged" @change="goPage('adjustments', 1)">المشتبه بس</label><button type="button" class="btn btn-outline btn-sm" @click="exportCsv('adjustments')"><i class="fa-solid fa-file-csv"></i>CSV</button></div>
-            <div class="overflow-x-auto px-3 pb-3" :class="busy && 'opacity-60'"><table class="tbl"><thead><tr><th>الصنف</th><th>قبل ← بعد</th><th>الفرق</th><th>الأثر المالي</th><th>بواسطة</th><th>السبب / التاريخ</th></tr></thead><tbody>
+            <div class="overflow-x-auto px-3 pb-3" :class="busy && 'opacity-60'"><table class="tbl"><thead><tr><th>الصنف</th><th>الموقع</th><th>قبل ← بعد</th><th>الفرق</th><th>الأثر المالي</th><th>بواسطة</th><th>السبب / التاريخ</th></tr></thead><tbody>
               <template x-for="a in d.adjustments.items" :key="a.id"><tr :class="a.flagged && 'bg-amber-500/5'"><td><div class="flex items-center gap-1.5"><i class="fa-solid fa-flag text-xs text-amber-500" x-show="a.flagged" title="مشتبه"></i><span class="font-medium" x-text="a.name"></span></div></td>
+                <td><loc-code x-show="a.location_code" :code="a.location_code"></loc-code><span class="text-muted" x-show="!a.location_code">—</span></td>
                 <td class="tabular-nums" x-text="num(a.old_quantity) + ' ← ' + num(a.new_quantity)"></td><td class="font-bold tabular-nums" :class="a.difference < 0 ? 'text-red-600' : 'text-brand-600'" x-text="(a.difference > 0 ? '+' : '') + num(a.difference)"></td>
                 <td class="tabular-nums" :class="a.value_impact < 0 ? 'text-red-600' : 'text-brand-600'" x-text="money(a.value_impact)"></td><td class="text-muted" x-text="a.user || '—'"></td>
                 <td class="max-w-[220px]"><div class="truncate text-xs" x-text="a.reason || '—'" :title="a.reason || '—'"></div><div class="text-xs text-muted" x-text="fmtDateTime(a.date)"></div></td></tr></template></tbody></table>
               <p class="empty" x-show="!d.adjustments.items.length">مفيش تعديلات في الفترة دي.</p></div>
               <div class="border-t border-line px-4"><ui-pager :page="d.adjustments.page" :pages="d.adjustments.total_pages" :total="d.adjustments.total" :size="d.adjustments.page_size" @go="goPage('adjustments', $event.detail)"></ui-pager></div></div>
         </div>
+      </div></template>
+    </section>
+
+    <!-- ===== دقة الجرد (الجلسات المعتمدة في الفترة) ===== -->
+    <section x-show="tab === 'stocktake'" x-cloak class="space-y-5">
+      <div x-show="st.stocktake === 'loading'" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><template x-for="i in 4"><div class="skeleton h-24"></div></template></div>
+      <div x-show="st.stocktake === 'error'" x-cloak class="card empty"><p class="mb-3 text-red-500" x-text="err.stocktake"></p><button type="button" class="btn btn-outline btn-sm" @click="ensure('stocktake', true)">إعادة المحاولة</button></div>
+      <template x-if="st.stocktake === 'ok' && d.stocktake"><div class="space-y-5">
+        <div class="rounded-2xl border border-line bg-soft p-4 text-sm leading-relaxed text-muted"><i class="fa-solid fa-clipboard-check text-brand-500"></i> الدقة = الأسطر المعدودة اللي العدّ فيها طابق لقطة النظام ÷ كل الأسطر المعدودة، في جلسات الجرد <b>المعتمدة</b> خلال الفترة. الأسطر اللي ماتعدّتش مش داخلة. القيم بسعر البيع وقت الجرد (مش تكلفة).</div>
+        <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div class="card card-pad"><div class="kpi-label">دقة الجرد</div><div class="mt-1 text-2xl font-bold tabular-nums" x-text="d.stocktake.accuracy_pct != null ? pct(d.stocktake.accuracy_pct) : '—'"></div><div class="text-xs text-muted" x-text="num(d.stocktake.sessions) + ' جلسة · ' + num(d.stocktake.counted_lines) + ' سطر معدود'"></div></div>
+          <div class="card card-pad"><div class="kpi-label">أسطر فيها فرق</div><div class="mt-1 text-2xl font-bold tabular-nums text-amber-600" x-text="num(d.stocktake.variance_lines)"></div></div>
+          <div class="card card-pad"><div class="kpi-label">قيمة العجز</div><div class="mt-1 text-2xl font-bold tabular-nums text-red-600" x-text="money(d.stocktake.shortage_value)"></div><div class="text-xs text-muted" x-text="'كمية ' + num(d.stocktake.shortage_qty)"></div></div>
+          <div class="card card-pad"><div class="kpi-label">قيمة الزيادة</div><div class="mt-1 text-2xl font-bold tabular-nums text-brand-600" x-text="money(d.stocktake.surplus_value)"></div><div class="text-xs text-muted" x-text="'كمية ' + num(d.stocktake.surplus_qty)"></div></div>
+        </div>
+        <div class="grid gap-5 xl:grid-cols-2">
+          <div class="card"><div class="border-b border-line p-4"><h2 class="text-base font-bold">حسب المخزن</h2></div><div class="overflow-x-auto px-3 pb-3"><table class="tbl"><thead><tr><th>المخزن</th><th>الدقة</th><th>أسطر فيها فرق</th><th>عجز</th><th>زيادة</th></tr></thead><tbody>
+            <template x-for="r in d.stocktake.by_warehouse" :key="r.warehouse_id"><tr><td class="font-medium" x-text="r.warehouse_code"></td><td class="tabular-nums" x-text="r.accuracy_pct != null ? pct(r.accuracy_pct) : '—'"></td><td class="tabular-nums" x-text="num(r.variance_lines) + ' / ' + num(r.counted_lines)"></td><td class="tabular-nums text-red-600" x-text="money(r.shortage_value)"></td><td class="tabular-nums text-brand-600" x-text="money(r.surplus_value)"></td></tr></template></tbody></table>
+            <p class="empty !py-8" x-show="!d.stocktake.by_warehouse.length">مفيش جلسات جرد معتمدة في الفترة دي.</p></div></div>
+          <div class="card"><div class="border-b border-line p-4"><h2 class="text-base font-bold">حسب المستخدم (اللي أنشأ الجلسة)</h2></div><div class="overflow-x-auto px-3 pb-3"><table class="tbl"><thead><tr><th>المستخدم</th><th>جلسات</th><th>الدقة</th><th>عجز</th><th>زيادة</th></tr></thead><tbody>
+            <template x-for="r in d.stocktake.by_user" :key="r.username"><tr><td class="font-medium" x-text="r.username"></td><td class="tabular-nums" x-text="num(r.sessions)"></td><td class="tabular-nums" x-text="r.accuracy_pct != null ? pct(r.accuracy_pct) : '—'"></td><td class="tabular-nums text-red-600" x-text="money(r.shortage_value)"></td><td class="tabular-nums text-brand-600" x-text="money(r.surplus_value)"></td></tr></template></tbody></table>
+            <p class="empty !py-8" x-show="!d.stocktake.by_user.length">—</p></div></div>
+        </div>
+        <div class="card"><div class="border-b border-line p-4"><h2 class="text-base font-bold">أكتر المواقع فرقًا (حسب القيمة)</h2></div><div class="overflow-x-auto px-3 pb-3"><table class="tbl"><thead><tr><th>الموقع</th><th>الدقة</th><th>أسطر فيها فرق</th><th>عجز</th><th>زيادة</th><th>الصافي</th></tr></thead><tbody>
+          <template x-for="r in d.stocktake.by_location" :key="r.location_id"><tr><td><loc-code :code="r.location_code"></loc-code></td><td class="tabular-nums" x-text="r.accuracy_pct != null ? pct(r.accuracy_pct) : '—'"></td><td class="tabular-nums" x-text="num(r.variance_lines) + ' / ' + num(r.counted_lines)"></td><td class="tabular-nums text-red-600" x-text="money(r.shortage_value)"></td><td class="tabular-nums text-brand-600" x-text="money(r.surplus_value)"></td><td class="font-bold tabular-nums" :class="r.net_value < 0 ? 'text-red-600' : 'text-brand-600'" x-text="money(r.net_value)"></td></tr></template></tbody></table>
+          <p class="empty !py-8" x-show="!d.stocktake.by_location.length">—</p></div></div>
+        <div class="card"><div class="border-b border-line p-4"><h2 class="text-base font-bold">الجلسات المعتمدة</h2></div><div class="overflow-x-auto px-3 pb-3"><table class="tbl"><thead><tr><th>#</th><th>اعتُمدت</th><th>أنشأها</th><th>اعتمدها</th><th>الدقة</th><th>عجز</th><th>زيادة</th></tr></thead><tbody>
+          <template x-for="r in d.stocktake.by_session" :key="r.id"><tr><td><a class="font-bold text-brand-600" :href="'stocktake.html#id=' + r.id" x-text="'#' + r.id"></a></td><td class="text-muted" x-text="fmtDateTime(r.approved_at)"></td><td x-text="r.created_by || '—'"></td><td x-text="r.approved_by || '—'"></td><td class="tabular-nums" x-text="r.accuracy_pct != null ? pct(r.accuracy_pct) : '—'"></td><td class="tabular-nums text-red-600" x-text="money(r.shortage_value)"></td><td class="tabular-nums text-brand-600" x-text="money(r.surplus_value)"></td></tr></template></tbody></table>
+          <p class="empty !py-8" x-show="!d.stocktake.by_session.length">—</p></div></div>
       </div></template>
     </section>
 

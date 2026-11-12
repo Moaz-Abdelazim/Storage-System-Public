@@ -23,11 +23,39 @@ document.addEventListener("alpine:init", () => {
     id: Number(getQuery("id")) || 0, st: null, sum: null, lines: [], page: 1, pages: 1, total: 0, size: 50, loading: false, error: "",
     f: { search: "", diff: false, uncounted: false }, dirty: {}, saving: false, importing: false, importErrors: null, busy: false,
     add: { open: false, product: null, location: null, qty: null, error: "" },
+    cancelDlg: { open: false, reason: "", saving: false, error: "" },
+    adj: { rows: [], loading: false, error: "" }, // سجل التسوية (للجلسات المعتمدة)
 
     get editable() { return !!this.st && ["draft", "counting"].includes(this.st.status); },
     get dirtyCount() { return Object.keys(this.dirty).length; },
 
-    init() { this.id ? this.load() : this.loadList(); window.addEventListener("beforeunload", (e) => { if (this.dirtyCount) { e.preventDefault(); e.returnValue = ""; } }); },
+    init() {
+      this.id ? this.load() : this.loadList();
+      window.addEventListener("beforeunload", (e) => { if (this.dirtyCount) { e.preventDefault(); e.returnValue = ""; } });
+      // زرار الرجوع/التقدّم في المتصفح أو تغيير الـ hash: نتزامن مع الـ URL من غير reload
+      window.addEventListener("popstate", () => this.syncFromLocation());
+      window.addEventListener("hashchange", () => this.syncFromLocation());
+    },
+
+    // ---------- التنقل بين القايمة والتفاصيل (من غير location.reload: كان بيلغي التنقل على Vercel بسبب cleanUrls) ----------
+    resetDetail() {
+      this.st = null; this.sum = null; this.lines = []; this.page = 1; this.pages = 1; this.total = 0; this.error = "";
+      this.f = { search: "", diff: false, uncounted: false }; this.dirty = {}; this.importErrors = null;
+      this.add = { open: false, product: null, location: null, qty: null, error: "" };
+      this.cancelDlg = { open: false, reason: "", saving: false, error: "" };
+      this.adj = { rows: [], loading: false, error: "" };
+    },
+    async syncFromLocation() {
+      const next = Number(getQuery("id")) || 0;
+      if (next === this.id) return;
+      if (this.id && this.dirtyCount) await this.flush(); // نحفظ العدّ المعلّق قبل ما نسيب الجلسة (بالـ id القديم)
+      this.resetDetail(); this.id = next;
+      this.id ? this.load() : this.loadList();
+    },
+    navigate(id) {
+      history.pushState(null, "", location.pathname + location.search + (id ? `#id=${id}` : ""));
+      return this.syncFromLocation();
+    },
 
     // ---------- القايمة ----------
     async loadList() {
@@ -37,8 +65,9 @@ document.addEventListener("alpine:init", () => {
       l.loading = false;
     },
     setStatus(s) { this.list.status = s; this.list.page = 1; this.loadList(); },
-    open(id) { location.href = `stocktake.html#id=${id}`; location.reload(); },
-    back() { location.href = "stocktake.html"; location.reload(); },
+    open(id) { return this.navigate(id); },
+    openFromRow(e, id) { if (e.target.closest("a, button, input, select, textarea, label")) return; this.open(id); },
+    async back() { if (!(await this.flush())) return; this.navigate(0); },
 
     async createSession() {
       const c = this.create; c.error = "";
@@ -47,7 +76,7 @@ document.addEventListener("alpine:init", () => {
       c.saving = true;
       try {
         const r = await api.post("/api/stocktakes", { [kind === "w" ? "warehouse_id" : "location_id"]: Number(id), note: c.note.trim() || null });
-        toast(`تم إنشاء جلسة الجرد (${r.lines_total} صنف)`); this.open(r.id);
+        toast(`تم إنشاء جلسة الجرد (${r.lines_total} صنف)`); this.create = { open: false, scope: null, note: "", saving: false, error: "" }; this.open(r.id); return;
       } catch (e) { c.error = errMsg(e); }
       c.saving = false;
     },
@@ -58,8 +87,14 @@ document.addEventListener("alpine:init", () => {
       try {
         const r = await api.get(`/api/stocktakes/${this.id}${qs({ page: this.page, page_size: this.size, search: this.f.search.trim(), only_diff: this.f.diff ? 1 : "", only_uncounted: this.f.uncounted ? 1 : "" })}`);
         this.st = r.stocktake; this.sum = r.summary; this.lines = r.items; this.total = r.total; this.pages = r.total_pages; this.page = r.page;
+        if (this.st.status === "approved" && !this.adj.rows.length) this.loadAdjustments();
       } catch (e) { this.error = errMsg(e); }
       this.loading = false;
+    },
+    async loadAdjustments() {
+      const a = this.adj; a.loading = true; a.error = "";
+      try { a.rows = (await api.get(`/api/stocktakes/${this.id}/adjustments`)).items; } catch (e) { a.error = errMsg(e); }
+      a.loading = false;
     },
     apply() { this.page = 1; this.load(); },
     async go(p) { if (await this.flush()) { this.page = p; this.load(); } },
@@ -68,6 +103,20 @@ document.addEventListener("alpine:init", () => {
     shown(l) { return l.line_id in this.dirty ? this.dirty[l.line_id] : (l.counted_qty ?? ""); },
     setCount(l, v) { const t = String(v).trim(); this.dirty = { ...this.dirty, [l.line_id]: t === "" ? null : Number(t) }; },
     diffOf(l) { const v = this.shown(l); return v === "" || v === null ? null : Math.round((Number(v) - l.system_qty) * 1000) / 1000; },
+    // حالة السطر (بتتحسب من القيمة المعروضة، فبتتحدّث مع الكتابة قبل الحفظ)
+    lineStatus(l) {
+      const d = this.diffOf(l);
+      if (d === null) return { label: "لم يُعدّ", cls: "badge-mute" };
+      if (d === 0) return { label: "مطابق", cls: "badge-ok" };
+      return d > 0 ? { label: "زيادة", cls: "badge-info" } : { label: "عجز", cls: "badge-bad" };
+    },
+    // Enter في خانة العدّ بينقل للسطر اللي بعده، وفي آخر سطر بيحفظ
+    focusNext(e) {
+      const all = [...document.querySelectorAll("[data-count-input]:not([disabled])")];
+      const nxt = all[all.indexOf(e.target) + 1];
+      if (nxt) { nxt.focus(); nxt.select(); } else this.save();
+    },
+    get progressPct() { const s = this.sum; return s && s.lines_total ? Math.round((s.counted / s.lines_total) * 100) : 0; },
     diffCls(l) { const d = this.diffOf(l); return d === null || d === 0 ? "" : d > 0 ? "text-brand-600" : "text-red-600"; },
 
     // حفظ التعديلات المعلّقة (بيرجع false لو فشل)
@@ -84,20 +133,34 @@ document.addEventListener("alpine:init", () => {
     async save() { if (await this.flush()) { toast("تم حفظ العدّ"); this.load(); } },
 
     async transition(path, { title, message, confirmText, ok, danger = false }) {
-      if (!(await this.flush())) return;
-      if (!(await confirmAction({ title, message, confirmText, danger }))) return;
+      if (this.busy) return; // يمنع الضغط المزدوج (اعتماد مرتين)
       this.busy = true;
-      try { await api.post(`/api/stocktakes/${this.id}/${path}`); invalidateData(); toast(ok); await this.load(); }
-      catch (e) { toast(errMsg(e), "error"); }
-      this.busy = false;
+      try {
+        if (!(await this.flush())) return;
+        if (!(await confirmAction({ title, message, confirmText, danger }))) return;
+        try { await api.post(`/api/stocktakes/${this.id}/${path}`); invalidateData(); toast(ok); await this.load(); }
+        catch (e) { toast(errMsg(e), "error"); await this.load(); } // نعيد التحميل: ممكن حد غيّر الحالة قبلنا
+      } finally { this.busy = false; }
     },
     submit() { return this.transition("submit", { title: "إرسال للمراجعة", message: "هتتقفل خانات العدّ لحد ما يتم الاعتماد أو الرجوع للعدّ. الأصناف اللي ماتعدّتش هتفضل كما هي.", confirmText: "إرسال", ok: "اتبعت للمراجعة" }); },
     reopen() { return this.transition("reopen", { title: "الرجوع للعدّ", message: "هترجع الجلسة لحالة العدّ وتقدر تعدّل الكميات.", confirmText: "رجوع", ok: "رجعت للعدّ" }); },
-    cancel() { return this.transition("cancel", { title: "إلغاء الجرد", message: "الجلسة هتتلغي ومفيش أي تسوية هتحصل.", confirmText: "إلغاء الجرد", ok: "تم إلغاء الجرد", danger: true }); },
+    // إلغاء الجلسة: نافذة بسبب اختياري (مفيش أي تسوية بتحصل)
+    async cancel() { if (this.busy || !(await this.flush())) return; this.cancelDlg = { open: true, reason: "", saving: false, error: "" }; },
+    async confirmCancel() {
+      const c = this.cancelDlg; if (c.saving) return;
+      c.saving = true; c.error = "";
+      try {
+        await api.post(`/api/stocktakes/${this.id}/cancel`, { reason: c.reason.trim() || null });
+        invalidateData(); c.open = false; toast("تم إلغاء الجرد"); await this.load();
+      } catch (e) { c.error = errMsg(e); }
+      c.saving = false;
+    },
     approve() {
       const s = this.sum || {};
+      const unc = s.uncounted || 0;
+      const warn = unc ? `تنبيه: فيه ${num(unc)} سطر لسه ماتعدّش، وهيفضل رصيده زي ما هو من غير أي تسوية.` : "كل الأسطر معدودة.";
       return this.transition("approve", { title: "اعتماد الجرد وتسوية الأرصدة", danger: true, confirmText: "اعتماد وتسوية",
-        message: `هيتعدّل رصيد ${s.diff_lines || 0} سطر (زيادة ${num(s.surplus_qty || 0)} وعجز ${num(s.shortage_qty || 0)}) ويتسجل في سجل التعديلات. العملية مش بترجع تاني. تكمل؟`, ok: "تم اعتماد الجرد وتسوية الأرصدة" });
+        message: `${warn} هيتعدّل رصيد ${s.diff_lines || 0} سطر (زيادة ${num(s.surplus_qty || 0)} وعجز ${num(s.shortage_qty || 0)}) ويتسجل لكل سطر في سجل التعديلات. العملية مش بترجع تاني. تكمل؟`, ok: "تم اعتماد الجرد وتسوية الأرصدة" });
     },
 
     // ---------- Excel ----------

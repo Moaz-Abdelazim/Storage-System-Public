@@ -1,10 +1,13 @@
-# مخزني — نظام إدارة المخازن
+# Jardy (جردي) — نظام إدارة المخازن
 
 نظام ويب لإدارة المخزون (منتجات، مخازن ومواقع تخزين هرمية، وارد/صادر/نقل، موردين وجهات استلام، تقارير) بواجهة عربي RTL.
 
 - **Backend:** FastAPI + SQLAlchemy + Alembic — MySQL 8 في الإنتاج، SQLite للتطوير.
 - **Frontend:** HTML + Alpine.js + Tailwind (ثابتة، من غير CDN) — فولدر `frontend/public`.
 - الأرقام الدقيقة: الكميات `DECIMAL(14,3)` والفلوس `DECIMAL(14,2)`، وتحديث الأرصدة كله **atomic** في `backend/app/services/inventory.py`.
+
+## اسم المنتج (إعداد مركزي)
+الاسم بيتحدد من مكان واحد بس: `backend/project.config.json` (`name` و`description`). الـ Backend بيقراه (عنوان الـ API وأوامر الـ CLI)، والواجهة بتجيبه من `GET /api/app-info` وبتعرضه في عناوين الصفحات وتسجيل الدخول والإعداد الأول والقائمة الجانبية والتقرير التنفيذي. **لتغيير الاسم:** عدّل `name` في الملف ده وأعد تشغيل/نشر الـ Backend، ومفيش أي ملف تاني يتعدّل. (الواجهة والـ Backend ممكن يتنشروا كـ Vercel projects منفصلة، عشان كده الملف جوه `backend/` مش في جذر الريبو.)
 
 ## الصلاحيات
 الأدمن (دور **مدير النظام**) بيعمل أدوار بصلاحيات من الكتالوج (`backend/app/permissions.py`) من صفحة «الأدوار والصلاحيات»، وبيعيّنها للمستخدمين. السيرفر هو اللي بيفرض الصلاحيات على كل endpoint؛ الواجهة بتخفي الأزرار والصفحات كتلميحات بس. القيم المالية (أسعار الشراء، إجماليات الوارد، قيمة المخزون، التقارير) محجوبة (`null`) بدون صلاحية `finance.view`.
@@ -52,7 +55,7 @@ pip-audit -r requirements.txt --no-deps --disable-pip # ثغرات التبعي�
 ## هيكل المشروع
 ```
 backend/app/        main.py, auth.py, permissions.py, models.py, services/ (inventory, roles), routers/, cli.py
-backend/alembic/    migrations (0001_baseline)
+backend/alembic/    migrations (0001_baseline، 0002_stocktake_audit_and_cancel)
 backend/tests/      pytest (مصفوفة صلاحيات لكل endpoint + تزامن + migrations)
 frontend/public/    صفحات HTML + js/ + css/app.css
 ```

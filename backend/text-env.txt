@@ -1,0 +1,35 @@
+# انسخ الملف ده لـ backend/.env وعدّل القيم. ممنوع ترفع .env على git.
+# النظام بيرفض يشتغل في الإنتاج لو SECRET_KEY / ALLOWED_HOSTS / ALLOWED_ORIGINS ناقصين أو ضعاف (انظر app/env.py).
+
+APP_ENV=production                       # development | production
+# مفتاح التوقيع (32 حرف على الأقل، عشوائي): python -c "import secrets; print(secrets.token_urlsafe(48))"
+SECRET_KEY=
+ALLOWED_HOSTS=stock.example.com          # الدومينات المسموحة (مفصولة بفاصلة)
+ALLOWED_ORIGINS=https://stock.example.com
+
+# قاعدة البيانات: sqlite (تطوير) أو mysql (إنتاج - MySQL 8)
+DB_ENGINE=mysql
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_DB=makhzani
+MYSQL_USER=makhzani
+MYSQL_PASSWORD=
+
+# الجلسة والكوكي. مدة الجلسة (والتوكن) بالدقايق - بعدها الجلسة بتظهر "منتهية الصلاحية" في سجل الدخول
+ACCESS_TOKEN_EXPIRE_MINUTES=480
+COOKIE_SECURE=1                          # 1 في الإنتاج (HTTPS)
+COOKIE_SAMESITE=strict
+
+# خلف nginx/Reverse proxy: فعّلهم بس لو البروكسي بيمسح X-Forwarded-For اللي جاي من العميل ويحط بتاعه (README: سيناريو nginx)
+TRUST_PROXY_HEADERS=0
+TRUSTED_PROXY_COUNT=1
+
+# محاولات الدخول الفاشلة
+LOGIN_MAX_FAILURES=5
+LOGIN_MAX_FAILURES_PER_USER=20
+LOGIN_WINDOW_SECONDS=900
+
+# العنوان العام للـ QR: الأفضل يتظبط من صفحة الإعدادات (بيتحفظ في الـ DB وليه الأولوية). HTTPS بدومين بس بدون مسار
+PUBLIC_BASE_URL=
+MAX_LOGO_MB=1                            # أقصى حجم للوجو (PNG/JPG فقط)
+LOG_LEVEL=INFO

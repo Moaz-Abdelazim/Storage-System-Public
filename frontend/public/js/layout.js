@@ -7,6 +7,8 @@
 // =====================================================================
 import { guard, getUser, can, isAdmin, logout, refreshMe } from "./auth.js";
 import { api } from "./api.js";
+import "./hints.js"; // رسائل الإرشاد لأول مرة
+import { setPageTitle } from "./app-info.js"; // اسم المنتج من project.config.json (عن طريق /api/app-info)
 import "./ui.js"; // <ui-select> و <ui-pager> و <loc-code> متاحين في كل الصفحات
 import { toggleTheme } from "./theme.js";
 
@@ -81,9 +83,9 @@ function shellHtml(active) {
 
   <aside class="fixed inset-y-0 start-0 z-40 flex w-[280px] flex-col bg-side text-slate-300 transition-transform duration-200 lg:sticky lg:top-0 lg:h-screen lg:shrink-0 lg:translate-x-0"
          :class="drawer ? 'translate-x-0' : 'translate-x-full'" aria-label="القائمة الرئيسية">
-    <a href="index.html" class="flex items-center gap-3 px-6 pb-4 pt-6" aria-label="مخزني">
+    <a href="index.html" class="flex items-center gap-3 px-6 pb-4 pt-6" data-app-name-label aria-label="">
       <div class="leading-tight">
-        <div class="text-[32px] font-bold leading-none text-white">مخزني</div>
+        <div class="text-[32px] font-bold leading-none text-white" data-app-name></div>
         <div class="mt-1.5 text-[11px] text-slate-400">إدارة المخازن والمخزون</div>
       </div>
       <svg class="ms-auto h-11 w-11 shrink-0" viewBox="0 0 64 64" fill="none" aria-hidden="true">
@@ -250,7 +252,7 @@ function mount() {
   if (!guard({ adminOnly: el.hasAttribute("data-admin-only"), perm })) return;
 
   const title = el.dataset.title;
-  if (title) document.title = `${title} | مخزني`;
+  if (title) setPageTitle(title);
 
   const content = document.createDocumentFragment();
   while (el.firstChild) content.appendChild(el.firstChild);

@@ -39,7 +39,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=Fals
 # Secure: الكوكي ما بتتبعتش غير على HTTPS (افتراضيًا شغّالة في production). في التطوير على http بتتقفل.
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "1" if IS_PRODUCTION else "0").strip() == "1"
 COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "strict").strip().lower()
-if COOKIE_SAMESITE not in ("strict", "lax"):  # none ممنوعة: بتفتح الباب لـ CSRF
+if IS_PRODUCTION and COOKIE_SAMESITE not in ("strict", "lax"):  # none ممنوعة: بتفتح الباب لـ CSRF
     raise RuntimeError("COOKIE_SAMESITE لازم تكون strict أو lax")
 # البادئة __Host- بتخلي المتصفح يرفض أي كوكي بنفس الاسم من subdomain أو من مسار تاني (Secure + Path=/ + من غير Domain)
 COOKIE_NAME = "__Host-session" if COOKIE_SECURE else "session"

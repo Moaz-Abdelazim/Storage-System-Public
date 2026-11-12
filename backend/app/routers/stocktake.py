@@ -7,7 +7,8 @@
   فالحركات اللي حصلت أثناء العدّ (وارد/صادر/نقل) ما بتضيعش. أي سطر لسه ماتعدّش (counted_qty = NULL) بيتساب زي ما هو.
 - الرصيد الجديد مينفعش يبقى سالب ولا أقل من المحجوز في المكان (409 برسالة فيها كل الأسطر المتأثرة، ومفيش حاجة بتتغيّر).
 - الاعتماد ذرّي: UPDATE ... WHERE status='review' (rowcount=1 وإلا 409) فمفيش اعتماد مزدوج، وكل شيء في transaction واحدة.
-- كل فرق بيعمل QuantityAdjustment (سبب: جرد #id) + سجل تدقيق. القيم المالية بتظهر بـ finance.view بس.
+- كل سطر فيه فرق بيعمل QuantityAdjustment مستقل (منتج + موقع + رصيد قبل/بعد + الفرق + القيمة بسعر البيع وقت اللقطة + رقم الجلسة + المستخدم
+  + السبب "جرد #id") + سجل تدقيق. القيم المالية بتظهر بـ finance.view بس.
 """
 import io
 from typing import List, Optional
@@ -44,6 +45,10 @@ class StocktakeCreate(BaseModel):
     note: Optional[str] = Field(default=None, max_length=500)
 
 
+class CancelIn(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=300)
+
+
 class CountIn(BaseModel):
     line_id: int
     counted_qty: Optional[float] = Field(default=None, ge=0, le=1e9)
@@ -74,6 +79,9 @@ def _transition(db: Session, st: models.Stocktake, allowed: tuple, new: str, **e
     )
     if res.rowcount != 1:
         db.rollback()
+        current = db.query(S.status).filter(S.id == st.id).scalar()
+        if current == new:  # نفس الخطوة اتنفّذت قبل كده (إعادة إرسال / ضغطتين) - مفيش أثر تاني
+            raise HTTPException(status_code=409, detail=f"الجرد ده بالفعل ({STATUS_LABEL.get(new, new)}) - مفيش حاجة اتطبقت تاني")
         raise HTTPException(status_code=409, detail="حالة الجرد اتغيّرت - حدّث الصفحة وجرّب تاني")
     db.refresh(st)
 
@@ -108,6 +116,7 @@ def _header(st: models.Stocktake, idx: LocationIndex) -> dict:
         "warehouse_id": st.warehouse_id, "location_id": st.location_id, "scope": scope,
         "created_by": st.created_by_username, "created_at": st.created_at,
         "approved_by": st.approved_by_username, "approved_at": st.approved_at,
+        "cancel_reason": st.cancel_reason, "cancelled_by": st.cancelled_by_username, "cancelled_at": st.cancelled_at,
     }
 
 
@@ -199,6 +208,7 @@ def get_stocktake(
             "line_id": line.id, "product_id": p.id, "product_name": p.name, "sku": p.sku, "barcode": p.barcode, "unit": p.unit,
             "location_id": line.location_id, "location_code": idx.full_code(line.location_id) if line.location_id in idx.locations else None,
             "system_qty": line.system_qty, "counted_qty": line.counted_qty, "diff": diff,
+            "line_status": "uncounted" if diff is None else ("match" if diff == 0 else ("surplus" if diff > 0 else "shortage")),
             "unit_price": line.unit_price if show_value else None,
             "diff_value": round(diff * (line.unit_price or 0), 2) if (diff is not None and show_value) else None,
         })
@@ -284,12 +294,15 @@ def reopen(
 
 @router.post("/{stocktake_id}/cancel")
 def cancel(
-    stocktake_id: int,
+    stocktake_id: int, payload: Optional[CancelIn] = None,
     db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_permission("stocktake.manage")),
 ):
+    """إلغاء الجلسة (مفيش أي تسوية بتحصل). سبب الإلغاء اختياري."""
     st = _get(db, stocktake_id)
-    _transition(db, st, ("draft", "counting", "review"), "cancelled")
-    audit(db, current_user, "stocktake", st.id, "cancel", None)
+    reason = ((payload.reason if payload else None) or "").strip() or None
+    _transition(db, st, ("draft", "counting", "review"), "cancelled", cancel_reason=reason,
+                cancelled_by_username=current_user.username, cancelled_at=now_cairo())
+    audit(db, current_user, "stocktake", st.id, "cancel", {"reason": reason} if reason else None)
     db.commit()
     return {"status": st.status}
 
@@ -399,6 +412,7 @@ def approve(
     """
     def _tx():
         st = _get(db, stocktake_id)
+        uncounted = db.query(func.count(SL.id)).filter(SL.stocktake_id == st.id, SL.counted_qty.is_(None)).scalar() or 0
         _transition(db, st, ("review",), "approved", approved_by_id=current_user.id,
                     approved_by_username=current_user.username, approved_at=now_cairo())
         changed = (
@@ -419,31 +433,55 @@ def approve(
             elif target < reserved:
                 problems.append(f"({names.get(l.product_id)}) في {code}: الرصيد الجديد {float(target):g} أقل من المحجوز {float(reserved):g}")
             else:
-                plan.append((l, target))
+                plan.append((l, target, on_hand, code))
         if problems:
             db.rollback()
             raise HTTPException(status_code=409, detail="مينفعش نعتمد الجرد: " + "؛ ".join(problems))
-        old_totals = {pid: float(inventory.product_total(db, pid)) for pid in {l.product_id for l, _ in plan}}
-        for l, target in plan:
-            inventory.set_location_quantity(db, l.product_id, l.location_id, target)
         shortage = surplus = 0.0
-        for pid, old in old_totals.items():
-            new = float(inventory.product_total(db, pid))
-            if new != old:
-                db.add(models.QuantityAdjustment(
-                    product_id=pid, old_quantity=old, new_quantity=new, difference=round(new - old, 3),
-                    changed_by_id=current_user.id, changed_by_username=current_user.username,
-                    reason=f"جرد #{st.id}", date=now_cairo(),
-                ))
-        for l, _t in plan:
-            d = l.counted_qty - l.system_qty
+        now = now_cairo()
+        for l, target, on_hand, code in plan:
+            inventory.set_location_quantity(db, l.product_id, l.location_id, target)
+            d = float(q3(l.counted_qty - l.system_qty))
             surplus += max(d, 0)
             shortage += max(-d, 0)
+            # سجل تدقيق مستقل لكل (منتج + موقع): الرصيد قبل/بعد في الموقع نفسه، والقيمة بسعر البيع المحفوظ وقت اللقطة
+            db.add(models.QuantityAdjustment(
+                product_id=l.product_id, old_quantity=float(on_hand), new_quantity=float(target), difference=d,
+                changed_by_id=current_user.id, changed_by_username=current_user.username,
+                reason=f"جرد #{st.id}", date=now,
+                location_id=l.location_id, location_code=code, stocktake_id=st.id,
+                unit_price=l.unit_price, value_difference=round(d * float(l.unit_price), 2) if l.unit_price is not None else None,
+            ))
         audit(db, current_user, "stocktake", st.id, "approve",
-              {"lines_adjusted": len(plan), "surplus_qty": round(surplus, 3), "shortage_qty": round(shortage, 3)})
+              {"lines_adjusted": len(plan), "uncounted_lines": int(uncounted),
+               "surplus_qty": round(surplus, 3), "shortage_qty": round(shortage, 3)})
         db.commit()
         db.refresh(st)
-        return st
+        return st, len(plan), int(uncounted)
 
-    st = inventory.with_retry(db, _tx)
-    return {"status": st.status, "approved_by": st.approved_by_username, "approved_at": st.approved_at}
+    st, adjusted, uncounted = inventory.with_retry(db, _tx)
+    return {"status": st.status, "approved_by": st.approved_by_username, "approved_at": st.approved_at,
+            "lines_adjusted": adjusted, "uncounted_lines": uncounted}
+
+
+@router.get("/{stocktake_id}/adjustments")
+def stocktake_adjustments(
+    stocktake_id: int,
+    db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_permission("stocktake.manage")),
+):
+    """سجل التسوية التفصيلي لجلسة معتمدة: سطر لكل منتج+موقع (قبل/بعد/الفرق/القيمة/المستخدم/السبب/التاريخ)."""
+    _get(db, stocktake_id)
+    show_value = permissions.has_permission(current_user, "finance.view")
+    A, P = models.QuantityAdjustment, models.Product
+    rows = (
+        db.query(A, P.name, P.sku).join(P, P.id == A.product_id)
+        .filter(A.stocktake_id == stocktake_id).order_by(A.id).all()
+    )
+    return {"items": [{
+        "id": a.id, "product_id": a.product_id, "product_name": name, "sku": sku,
+        "location_id": a.location_id, "location_code": a.location_code,
+        "old_quantity": a.old_quantity, "new_quantity": a.new_quantity, "difference": a.difference,
+        "unit_price": a.unit_price if show_value else None,
+        "value_difference": a.value_difference if show_value else None,
+        "stocktake_id": a.stocktake_id, "changed_by": a.changed_by_username, "reason": a.reason, "date": a.date,
+    } for a, name, sku in rows]}

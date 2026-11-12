@@ -20,6 +20,8 @@ import sys
 from typing import Optional
 
 from dotenv import load_dotenv
+
+from .project_config import app_name
 from sqlalchemy.exc import SQLAlchemyError
 
 
@@ -160,7 +162,7 @@ def _read_password(from_stdin: bool) -> str:
 
 def main(argv: Optional[list] = None) -> int:
     load_dotenv()
-    parser = argparse.ArgumentParser(prog="python -m app.cli", description="أوامر إدارة مخزني")
+    parser = argparse.ArgumentParser(prog="python -m app.cli", description=f"أوامر إدارة {app_name()}")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("migrate", help="تطبيق الـ migrations (alembic upgrade head)")
     sub.add_parser("init-db", help="إنشاء الجداول (تطوير/اختبار فقط)")

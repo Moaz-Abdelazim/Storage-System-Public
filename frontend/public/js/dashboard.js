@@ -201,6 +201,7 @@ document.addEventListener("alpine:init", () => {
         this.summary = d.summary;
         this.out = d.admin ? d.admin.out_totals : null;
         this.adminData = d.admin;
+        this.admin = d.finance_visible !== undefined ? !!d.finance_visible : !!d.admin;  // رد السيرفر هو المرجع (مش تلميحات localStorage)
         this.flow = d.flow.map((r) => ({ date: r.date, inQty: Number(r.in_qty) || 0, outQty: Number(r.out_qty) || 0 }));
         this.dist = d.distribution.map((w, i) => ({
           label: `${w.code} — ${w.name}`, quantity: w.quantity, pct: Math.round(w.pct), color: PALETTE[i % PALETTE.length],

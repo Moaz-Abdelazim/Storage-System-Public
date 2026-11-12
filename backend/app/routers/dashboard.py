@@ -190,6 +190,7 @@ def overview(
             can_invoices=permissions.has_permission(current_user, "invoices.view"),
             can_transfers=permissions.has_permission(current_user, "transfers.view"),
         ),
+        "finance_visible": is_admin,  # الواجهة بتعتمد عليه (مش على localStorage) في إظهار الملخص المالي
         "admin": None,
     }
 

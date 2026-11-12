@@ -289,6 +289,12 @@ class QuantityAdjustment(Base):
     changed_by_username = Column(String(50), nullable=True)  # نسخة من اسمه وقت التعديل
     reason = Column(Text, nullable=True)
     date = Column(DateTime, default=now_cairo)
+    # تفاصيل إضافية لتسويات الجرد (بتبقى NULL للتعديلات اليدوية القديمة): سجل لكل (منتج + موقع) فيه فرق
+    location_id = Column(Integer, ForeignKey("locations.id"), nullable=True)
+    location_code = Column(String(255), nullable=True)  # نسخة من كود الموقع وقت التسوية
+    stocktake_id = Column(Integer, ForeignKey("stocktakes.id"), nullable=True)
+    unit_price = Column(Money(), nullable=True)  # سعر بيع المنتج وقت لقطة الجرد (مش تكلفة)
+    value_difference = Column(Money(), nullable=True)  # الفرق × unit_price (بسعر البيع)
 
     product = relationship("Product")
     changed_by = relationship("User")
@@ -448,6 +454,9 @@ class Stocktake(Base):
     approved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     approved_by_username = Column(String(50), nullable=True)
     approved_at = Column(DateTime, nullable=True)
+    cancel_reason = Column(String(300), nullable=True)  # سبب الإلغاء (اختياري)
+    cancelled_by_username = Column(String(50), nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
 
     lines = relationship("StocktakeLine", back_populates="stocktake", cascade="all, delete-orphan")
 
@@ -485,6 +494,7 @@ _EXTRA_INDEXES = [
     ("ix_stock_out_items_product", StockOutItem.product_id),
     ("ix_quantity_adjustments_date", QuantityAdjustment.date),
     ("ix_quantity_adjustments_product", QuantityAdjustment.product_id),
+    ("ix_quantity_adjustments_stocktake", QuantityAdjustment.stocktake_id),
     ("ix_login_logs_login_time", LoginLog.login_time),
     ("ix_login_logs_expires_at", LoginLog.expires_at),
 ]

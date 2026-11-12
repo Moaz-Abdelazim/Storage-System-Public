@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <meta name="robots" content="noindex, nofollow">
-  <title>لوحة القيادة | مخزني</title>
+  <title>لوحة القيادة</title>
   <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
   <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -59,12 +59,12 @@
       </template>
     </section>
 
-    <!-- ===== الملخص المالي (للأدمن فقط) ===== -->
+    <!-- ===== الملخص المالي (لمن عنده صلاحية رؤية القيم المالية finance.view بس) ===== -->
     <template x-if="admin">
       <section class="overflow-hidden rounded-2xl bg-gradient-to-l from-ink-800 to-ink-900 p-5 text-white shadow-card" aria-label="الملخص المالي">
         <div class="mb-4 flex items-center justify-between">
           <h2 class="flex items-center gap-2 text-base font-bold"><i class="fa-solid fa-chart-line text-brand-400"></i>الملخص المالي</h2>
-          <span class="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-xs text-slate-300"><i class="fa-solid fa-lock text-[10px]"></i>للأدمن فقط</span>
+          <span class="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-xs text-slate-300"><i class="fa-solid fa-lock text-[10px]"></i>بصلاحية القيم المالية</span>
         </div>
         <div class="grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-2 lg:grid-cols-4">
           <template x-for="f in finance" :key="f.label">

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <meta name="robots" content="noindex, nofollow">
-  <title>إذن صرف | مخزني</title>
+  <title>إذن صرف</title>
   <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
   <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -25,6 +25,19 @@
         <div><h1 class="text-2xl font-bold" x-text="editId ? (editStatus === 'reserved' ? 'تعديل حجز #' : 'تعديل عرض سعر #') + editId : 'إذن صرف'">إذن صرف</h1><p class="mt-0.5 text-sm text-muted">عرض سعر، حجز كميات، أو صرف مباشر لجهة مستلمة من أماكن تخزينها (مستند مخزني غير ضريبي)</p></div>
       </div>
       <a href="movements.html#kind=out" class="btn btn-outline"><i class="fa-solid fa-clock-rotate-left"></i>كل المستندات</a>
+    </div>
+
+    <div x-data="hint('stock-out-modes')" x-show="open" x-cloak class="flex items-start gap-3 rounded-xl border border-sky-300/60 bg-sky-500/10 px-4 py-3 text-sm text-sky-900 dark:text-sky-100" role="note">
+      <i class="fa-solid fa-lightbulb mt-0.5" aria-hidden="true"></i>
+      <div class="flex-1">
+        <b>إيه الفرق بين الأنواع؟</b>
+        <ul class="mt-1 list-disc space-y-0.5 ps-5">
+          <li><b>عرض سعر:</b> مستند للعميل من غير أي تأثير على المخزون.</li>
+          <li><b>حجز:</b> بيقلل الكمية المتاحة بس، والكمية بتفضل في المخزن لحد ما تتم الصرف.</li>
+          <li><b>صرف مباشر:</b> بينقص المخزون فورًا ويتسجل كإذن صرف.</li>
+        </ul>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm shrink-0" @click="dismiss()">فهمت</button>
     </div>
 
     <!-- تحميل/خطأ تعديل عرض سعر أو حجز -->

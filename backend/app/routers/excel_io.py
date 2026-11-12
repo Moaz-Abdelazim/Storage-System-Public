@@ -619,6 +619,10 @@ def export_quantity_adjustments(db: Session = Depends(get_db), admin: models.Use
             "الفرق": log.difference,
             "اللي عدّل": format_user_display(log.changed_by, log.changed_by_username),
             "السبب": log.reason,
+            "الموقع": log.location_code,
+            "جلسة الجرد": log.stocktake_id,
+            "سعر البيع وقت الجرد": log.unit_price,
+            "القيمة المالية (بسعر البيع)": log.value_difference,
         }
         for log in logs
     ]

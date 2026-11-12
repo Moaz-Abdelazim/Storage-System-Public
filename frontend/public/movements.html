@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <meta name="robots" content="noindex, nofollow">
-  <title>سجل الحركات | مخزني</title>
+  <title>سجل الحركات</title>
   <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
   <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -35,9 +35,16 @@
 
     <div class="grid gap-4 sm:grid-cols-3" x-show="view === 'log'">
       <div class="card card-pad flex items-center gap-4"><span class="grid h-12 w-12 place-items-center rounded-2xl bg-brand-500/10 text-xl text-brand-600"><i class="fa-solid fa-arrow-down"></i></span>
-        <div><div class="kpi-label">إذونات الإضافة (مكتملة)</div><div class="text-2xl font-bold tabular-nums" x-text="totals ? num(totals.in_invoices_count) : '—'"></div><div class="text-xs text-muted" x-text="totals ? money(totals.in_total_value) : ''"></div></div></div>
+        <div><div class="kpi-label">إذونات الإضافة (مكتملة)</div><div class="text-2xl font-bold tabular-nums" x-text="totals ? num(totals.in_invoices_count) : '—'"></div><div class="text-xs text-muted" x-text="totals && totals.in_total_value != null ? 'قيمة الأصناف بسعر الشراء ' + money(totals.in_total_value) : ''"></div></div></div>
       <div class="card card-pad flex items-center gap-4"><span class="grid h-12 w-12 place-items-center rounded-2xl bg-orange-500/10 text-xl text-orange-600"><i class="fa-solid fa-arrow-up"></i></span>
-        <div><div class="kpi-label">إذونات الصرف (مكتملة)</div><div class="text-2xl font-bold tabular-nums" x-text="totals ? num(totals.out_invoices_count) : '—'"></div><div class="text-xs text-muted" x-text="totals ? 'قبل الخصم ' + money(totals.out_total_value) : ''"></div><div class="text-xs text-muted" x-show="totals && totals.out_discount_total > 0" x-text="totals ? 'الصافي بعد الخصم ' + money(totals.out_net_value) : ''"></div></div></div>
+        <div class="min-w-0"><div class="kpi-label">إذونات الصرف (مكتملة)</div><div class="text-2xl font-bold tabular-nums" x-text="totals ? num(totals.out_invoices_count) : '—'"></div>
+          <dl class="mt-1 space-y-0.5 text-xs text-muted" x-show="totals" x-cloak>
+            <div class="flex justify-between gap-4"><dt>الإجمالي قبل الخصم</dt><dd class="tabular-nums" x-text="totals ? money(totals.out_total_value) : ''"></dd></div>
+            <div class="flex justify-between gap-4" x-show="totals && totals.out_discount_total > 0"><dt>الخصم</dt><dd class="tabular-nums" x-text="totals ? '−' + money(totals.out_discount_total) : ''"></dd></div>
+            <div class="flex justify-between gap-4" x-show="totals && totals.out_discount_total > 0"><dt>الصافي بعد الخصم</dt><dd class="tabular-nums" x-text="totals ? money(totals.out_net_value) : ''"></dd></div>
+            <div class="flex justify-between gap-4" x-show="totals && totals.out_tax_total > 0"><dt>الضريبة</dt><dd class="tabular-nums" x-text="totals ? '+' + money(totals.out_tax_total) : ''"></dd></div>
+            <div class="flex justify-between gap-4 border-t border-line pt-0.5 font-bold text-ink-800 dark:text-slate-100"><dt>الإجمالي النهائي</dt><dd class="tabular-nums" x-text="totals ? money(outGrand()) : ''"></dd></div>
+          </dl></div></div>
       <div class="card card-pad flex items-center gap-4"><span class="grid h-12 w-12 place-items-center rounded-2xl bg-blue-500/10 text-xl text-blue-600"><i class="fa-solid fa-right-left"></i></span>
         <div><div class="kpi-label">حركات النقل</div><div class="text-2xl font-bold tabular-nums" x-text="totals ? num(totals.transfers_count) : '—'"></div><div class="text-xs text-muted" x-text="totals ? num(totals.transfers_quantity) + ' قطعة' : ''"></div></div></div>
     </div>
@@ -66,7 +73,7 @@
     <section class="card">
       <div class="overflow-x-auto px-3 pt-3">
         <table class="tbl">
-          <thead><tr><th>النوع</th><th>المرجع</th><th>الجهة / المكان</th><th>بواسطة</th><th>التاريخ</th><th>الأصناف</th><th>القيمة</th></tr></thead>
+          <thead><tr><th>النوع</th><th>المرجع</th><th>الجهة / المكان</th><th>بواسطة</th><th>التاريخ</th><th>الأصناف</th><th>الإجمالي النهائي</th></tr></thead>
           <tbody>
             <template x-if="loading && !rows.length"><template x-for="i in 8"><tr><td colspan="7"><div class="skeleton h-7"></div></td></tr></template></template>
             <template x-for="r in rows" :key="r.key">
@@ -76,7 +83,7 @@
                 <td><template x-if="r.kind === 'transfer'"><span class="inline-flex items-center gap-1.5"><loc-code :code="r.from"></loc-code><i class="fa-solid fa-arrow-left text-[10px] text-muted"></i><loc-code :code="r.to"></loc-code></span></template>
                   <template x-if="r.kind !== 'transfer'"><span x-text="r.party || '—'"></span></template></td>
                 <td class="text-muted" x-text="r.user || '—'"></td><td class="text-muted" x-text="r.date"></td>
-                <td class="tabular-nums" x-text="r.items"></td><td class="font-medium tabular-nums" x-text="r.value"></td>
+                <td class="tabular-nums" x-text="r.items"></td><td class="tabular-nums"><div class="font-medium" x-text="r.value"></div><div class="max-w-[260px] whitespace-normal text-[11px] leading-snug text-muted" x-show="r.valueDetail" x-text="r.valueDetail"></div></td>
               </tr>
             </template>
           </tbody>
