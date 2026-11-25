@@ -64,7 +64,7 @@ def test_upgrade_twice_is_noop(eng):
     with eng.begin() as conn:
         cli.migrate(conn)
     with eng.connect() as conn:
-        assert conn.execute(text("select version_num from alembic_version")).scalars().all() == ["0002"]
+        assert conn.execute(text("select version_num from alembic_version")).scalars().all() == ["0003"]
         assert _diff(conn) == []
 
 
@@ -122,7 +122,7 @@ def test_init_db_stamps_head_so_migrate_is_noop(tmp_path):
     eng = create_engine(f"sqlite:///{tmp_path / 'dev.db'}")
     cli.init_db(eng)
     with eng.connect() as conn:
-        assert conn.execute(text("select version_num from alembic_version")).scalars().all() == ["0002"]
+        assert conn.execute(text("select version_num from alembic_version")).scalars().all() == ["0003"]
     with eng.begin() as conn:
         cli.migrate(conn)  # من غير "table already exists"
     assert _tables(eng) >= set(Base.metadata.tables)

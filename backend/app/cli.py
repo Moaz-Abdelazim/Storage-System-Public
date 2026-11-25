@@ -5,6 +5,7 @@
     python -m app.cli init-db         # ينشئ الجداول - للتطوير والاختبار فقط (مرفوض في production)
     python -m app.cli cleanup         # يمسح سجلات الدخول ومحاولات الدخول القديمة (retention) - جرّب --dry-run الأول
     python -m app.cli check-stock     # يفحص تطابق إجمالي كل منتج مع مجموع أماكنه + تطابق المحجوز مع إذونات الحجز (exit 1 لو فيه فرق)
+    python -m app.cli check-images    # يفحص صور المنتجات: ملفات يتيمة (مش مربوطة بمنتج) وصور مفقودة (منتج بيشاور على ملف مش موجود). --fix بيمسح اليتيمة
     python -m app.cli create-admin    # ينشئ حساب أدمن (بيسأل عن الباسورد، مفيش باسورد في env ولا في الأوامر)
 
 أمثلة:
@@ -151,6 +152,33 @@ def check_stock(db) -> list:
     return problems
 
 
+def check_images(db, fix: bool = False) -> dict:
+    """يقارن المفاتيح المربوطة في products.image_key بالملفات الموجودة في مخزن الوسائط.
+    orphans: ملفات مش مربوطة بمنتج ولا بدفعة رفع شغالة (بتتمسح مع fix). missing: منتجات image_key بتاعها مفيهوش ملفات (بتتبلّغ بس: مش بنعدّل بيانات المنتج)."""
+    from . import models
+    from .services.media_store import get_store, valid_key
+
+    store = get_store()
+    referenced = {k for (k,) in db.query(models.Product.image_key).filter(models.Product.image_key.is_not(None)).all()}
+    staged = set()
+    for token, _mtime in store.staging_list():
+        meta = store.staging_read(token) or {}
+        staged.update(it["key"] for it in meta.get("items", []) if it.get("key"))
+    on_disk = set(store.list_keys())
+    orphans = sorted(on_disk - referenced - staged)
+    missing = sorted(
+        (pid, name) for pid, name, key in db.query(models.Product.id, models.Product.name, models.Product.image_key).filter(models.Product.image_key.is_not(None)).all()
+        if not valid_key(key) or not (store.exists(key, "main.webp") and store.exists(key, "thumb.webp"))
+    )
+    removed = 0
+    if fix:
+        for key in orphans:
+            store.delete(key)
+            removed += 1
+        store.purge_tmp()
+    return {"orphans": orphans, "missing": missing, "removed": removed, "on_disk": len(on_disk), "referenced": len(referenced)}
+
+
 def _read_password(from_stdin: bool) -> str:
     if from_stdin:
         return sys.stdin.readline().rstrip("\r\n")
@@ -171,6 +199,8 @@ def main(argv: Optional[list] = None) -> int:
     p_clean.add_argument("--attempts-days", type=int, default=7)
     p_clean.add_argument("--dry-run", action="store_true")
     sub.add_parser("check-stock", help="فحص تطابق أرصدة المنتجات مع أماكنها (exit 1 لو فيه فرق)")
+    p_img = sub.add_parser("check-images", help="فحص صور المنتجات: ملفات يتيمة وصور مفقودة (exit 1 لو فيه صور مفقودة)")
+    p_img.add_argument("--fix", action="store_true", help="امسح الملفات اليتيمة")
     p_admin = sub.add_parser("create-admin", help="إنشاء حساب أدمن")
     p_admin.add_argument("--username", required=True)
     p_admin.add_argument("--full-name", default=None)
@@ -211,6 +241,23 @@ def main(argv: Optional[list] = None) -> int:
             for p in problems:
                 print(f"✘ منتج #{p['product_id']} ({p['name']}): الإجمالي={p['product_quantity']} ومجموع الأماكن={p['locations_sum']}")
             return 1
+        if args.command == "check-images":
+            from .database import SessionLocal
+
+            db = SessionLocal()
+            try:
+                res = check_images(db, fix=args.fix)
+            finally:
+                db.close()
+            print(f"الصور على disk: {res['on_disk']} | المربوطة بمنتجات: {res['referenced']}")
+            if res["orphans"]:
+                verb = f"اتمسح {res['removed']}" if args.fix else "استخدم --fix لمسحها"
+                print(f"⚠ ملفات يتيمة: {len(res['orphans'])} ({verb})")
+            for pid, name in res["missing"]:
+                print(f"✘ منتج #{pid} ({name}): ملف الصورة مفقود")
+            if not res["orphans"] and not res["missing"]:
+                print("✔ صور المنتجات سليمة")
+            return 1 if res["missing"] else 0
         if args.command == "create-admin":
             password = _read_password(args.password_stdin)
             from .database import SessionLocal

@@ -1,3 +1,30 @@
+# CHANGES — جولة: صفحة تفاصيل المنتج + سجل الحركة + صور المنتجات (Excel / ZIP / رفع مباشر)
+
+> التفاصيل الكاملة: `DELIVERY_REPORT.md` (التسليم) و`LOAD_TEST_REPORT.md` (الأداء).
+
+## نتيجة الاختبارات
+| البيئة | النتيجة |
+|---|---|
+| SQLite | **837 passed, 4 skipped** (كان 703 قبل الجولة؛ الـ 4 = migrations على MySQL) |
+| MySQL 8.0 (قواعد جديدة) | **841 passed, 0 failed, 0 skipped** |
+| الواجهة | `npm test` 9/9، `check:js`، Tailwind output مستقر، `pip-audit` نضيف |
+
+## الجديد
+- **صفحة تفاصيل المنتج** (`product.html`): بيانات + صورة + توزيع المخزون + سجل الحركة (فلاتر/pagination من الـ Backend/أرصدة قبل-بعد).
+- **سجل الحركة**: `GET /api/products/{id}/history` (وارد/صادر/نقل/تعديل/جرد، الملغي بيتخفى افتراضيًا، التحويل صف واحد).
+- **صور المنتجات**: رفع/تحديث/حذف، ضغط WebP + Thumbnail + EXIF، تخزين على disk خلف طبقة (`MEDIA_DIR`)، `python -m app.cli check-images`.
+- **Excel**: استيراد صور مضمنة (عايمة + جوه الخلية) بالربط من إحداثيات الـ anchor وعمود «الصورة»، تصدير بالصور.
+- **رفع بالجملة**: ZIP/صور بأسماء = SKU/باركود + شاشة مطابقة (`product-images.html`).
+- migration `0003` (`products.image_key`).
+
+## تعديلات خارج النطاق الأصلي (منفصلة)
+- **إصلاح deadlock الدخول المتزامن على MySQL** في `auth.py` (من ملف الـ load test القديم) + `test_jardy_concurrent_login.py`.
+- استعادة `conftest/helpers` و12 ملف اختبار من تاريخ git (اتشالوا في `18db50f`) وتعديل اختبار `SameSite=none` ليطابق الكود الحالي.
+- رفع حد ملفات الـ zip في استيراد Excel (200 → 5,200).
+- أدوات Load Test: `loadtest/` (القديمة) و`backend/loadtest_features/` (الجديدة).
+
+---
+
 # CHANGES — Jardy (جردي): جولة تحسينات الجرد والقيم المالية والاسم المركزي
 
 ## نتيجة الاختبارات الحقيقية

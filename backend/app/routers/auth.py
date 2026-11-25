@@ -14,7 +14,7 @@ from ..database import get_db
 from ..display_utils import format_user_display
 from ..security import client_ip, login_limiter
 from ..query_helpers import contains, page_args, paged
-from ..services import sessions as session_svc
+from ..services import inventory, sessions as session_svc
 from ..services.audit import audit
 from ..rate_limit import limit_per_user
 from ..services.roles import role_name_exists  # noqa: F401
@@ -101,22 +101,29 @@ def login(payload: schemas.LoginRequest, request: Request, response: Response, d
     if user.role is None or (not user.role.is_system and not user.role.is_active):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="الدور بتاعك موقوف، كلّم الأدمن")
 
-    login_limiter.clear(db, ip, username.lower())
-    session_svc.expire_stale_sessions(db)  # جلسات عدّى وقتها بتتقفل كمنتهية (مش تفضل "مفتوحة")
+    uid, uname, ip_addr = user.id, user.username, ip
 
-    # الجلسة (login_log) بتتعمل الأول عشان ناخد الـ id بتاعها ونحطه جوه التوكن نفسه (sid) -
-    # ده اللي بيخلي أي إغلاق للجلسة دي (من المستخدم أو من الأدمن) يبطل التوكن فورًا
-    now = now_cairo()
-    log = models.LoginLog(
-        user_id=user.id,
-        username=user.username,
-        login_time=now,
-        expires_at=session_svc.expiry_for(now, auth.ACCESS_TOKEN_EXPIRE_MINUTES),  # نفس مدة التوكن
-        ip_address=ip,
-    )
-    db.add(log)
-    db.commit()
-    db.refresh(log)
+    def _open_session():
+        login_limiter.clear(db, ip, username.lower())
+        session_svc.expire_stale_sessions(db)  # جلسات عدّى وقتها بتتقفل كمنتهية (مش تفضل "مفتوحة")
+        # الجلسة (login_log) بتتعمل الأول عشان ناخد الـ id بتاعها ونحطه جوه التوكن نفسه (sid) -
+        # ده اللي بيخلي أي إغلاق للجلسة دي (من المستخدم أو من الأدمن) يبطل التوكن فورًا
+        now = now_cairo()
+        entry = models.LoginLog(
+            user_id=uid,
+            username=uname,
+            login_time=now,
+            expires_at=session_svc.expiry_for(now, auth.ACCESS_TOKEN_EXPIRE_MINUTES),  # نفس مدة التوكن
+            ip_address=ip_addr,
+        )
+        db.add(entry)
+        db.commit()
+        db.refresh(entry)
+        return entry
+
+    # دخول أكتر من مستخدم في نفس اللحظة (بداية الوردية) كان بيعمل MySQL deadlock (1213) بين UPDATE قفل الجلسات المنتهية
+    # و INSERT الجلسة الجديدة -> 500. كل الخطوات دي جوه transaction واحدة وبتتعاد من الأول لو حصل deadlock.
+    log = inventory.with_retry(db, _open_session, attempts=5)
 
     token = auth.create_access_token({"sub": user.username, "sid": log.id})
     auth.set_session_cookie(response, token)  # التوكن في HttpOnly cookie فقط - مش بنرجّعه في الـ body

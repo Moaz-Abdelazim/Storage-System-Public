@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>رفع صور المنتجات</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="js/theme-init.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+</head>
+<body>
+<noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
+
+<div id="shell" data-perm="products.edit" data-active="products" data-title="رفع صور المنتجات">
+  <div x-data="imageBatch" class="space-y-5">
+
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-bold">رفع صور المنتجات بالجملة</h1>
+        <p class="mt-1 text-sm text-muted">ارفع ملف ZIP (أو مجموعة صور) أسماء ملفاته هي SKU أو باركود المنتج، والنظام بيربط كل صورة بمنتجها لوحده.</p>
+      </div>
+      <a href="products.html" class="btn btn-outline"><i class="fa-solid fa-arrow-right"></i>المنتجات</a>
+    </div>
+
+    <!-- ===== الخطوة 1: الرفع ===== -->
+    <section class="card card-pad" x-show="step === 'upload'">
+      <label class="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed px-6 py-12 text-center transition"
+             :class="drag ? 'border-brand-500 bg-brand-500/5' : 'border-line hover:border-brand-500/50 hover:bg-soft'"
+             @dragover.prevent="drag = true" @dragleave.prevent="drag = false" @drop.prevent="drag = false; upload($event.dataTransfer.files)">
+        <i class="fa-solid fa-spinner animate-spin text-3xl text-brand-500" x-show="uploading"></i>
+        <i class="fa-solid fa-file-zipper text-3xl text-brand-500" x-show="!uploading"></i>
+        <span class="text-sm font-medium" x-text="uploading ? 'بنعالج الصور ونطابقها… ممكن ياخد دقيقة للدفعات الكبيرة' : 'اسحب ملف ZIP أو الصور هنا، أو اضغط للاختيار'"></span>
+        <span class="text-xs text-muted">ZIP أو JPEG / PNG / WebP — لحد 300 صورة في المرة، والصورة لحد 8 ميجا</span>
+        <input type="file" class="sr-only" accept=".zip,image/jpeg,image/png,image/webp" multiple :disabled="uploading" @change="upload($event.target.files); $event.target.value = ''">
+      </label>
+      <div class="mt-3 flex flex-wrap items-center gap-3 text-sm">
+        <label class="btn btn-outline btn-sm cursor-pointer" :class="uploading && 'pointer-events-none opacity-60'"><i class="fa-regular fa-folder-open"></i>اختيار مجلد صور
+          <input type="file" class="sr-only" webkitdirectory multiple :disabled="uploading" @change="upload($event.target.files); $event.target.value = ''">
+        </label>
+        <span class="text-xs text-muted">المجلد بيتقرا بكل صوره (من غير ما تضغطه).</span>
+      </div>
+      <p class="field-err mt-3" x-show="error" x-text="error"></p>
+      <div class="mt-5 rounded-xl bg-soft p-4 text-sm leading-relaxed">
+        <p class="font-bold">إزاي بتتطابق الصور؟</p>
+        <ul class="mt-2 list-disc space-y-1 ps-5 text-muted">
+          <li>اسم الملف (من غير الامتداد) = SKU أو الباركود، مثلًا <span dir="ltr" class="font-mono">SKU-100.jpg</span> أو <span dir="ltr" class="font-mono">6221234567890.png</span> (من غير حساسية لحالة الحروف).</li>
+          <li>الترقيم في آخر الاسم بيتتجاهل لو مفيش تطابق تام: <span dir="ltr" class="font-mono">SKU-100_2.jpg</span> ← SKU-100.</li>
+          <li>اللي ما اتطابقش بتختار له المنتج بنفسك في الشاشة اللي بعدها، قبل ما يتحفظ أي حاجة.</li>
+          <li>صورة واحدة لكل منتج. لو الاسم اتكرر، أول صورة (أبجديًا) هي اللي بتتطابق.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ===== الخطوة 2: المراجعة والمطابقة ===== -->
+    <template x-if="step === 'review' && batch">
+      <section class="space-y-4">
+        <div class="card card-pad">
+          <div class="flex flex-wrap items-center gap-2 text-sm">
+            <button type="button" class="seg-btn" :class="tab === 'all' && 'seg-btn-on'" @click="tab = 'all'">الكل <b class="tabular-nums" x-text="batch.total"></b></button>
+            <button type="button" class="seg-btn" :class="tab === 'matched' && 'seg-btn-on'" @click="tab = 'matched'">متطابقة <b class="tabular-nums" x-text="batch.counts.matched"></b></button>
+            <button type="button" class="seg-btn" :class="tab === 'todo' && 'seg-btn-on'" @click="tab = 'todo'">محتاجة اختيار <b class="tabular-nums" x-text="todoCount"></b></button>
+            <button type="button" class="seg-btn" :class="tab === 'invalid' && 'seg-btn-on'" x-show="batch.counts.invalid" @click="tab = 'invalid'">فيها مشاكل <b class="tabular-nums" x-text="batch.counts.invalid"></b></button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="overflow-x-auto px-3 pt-3">
+            <table class="tbl">
+              <thead><tr><th class="w-16">الصورة</th><th>اسم الملف</th><th>الحالة</th><th>المنتج</th><th class="w-1"></th></tr></thead>
+              <tbody>
+                <template x-for="it in visibleItems" :key="it.id">
+                  <tr>
+                    <td><div class="flex h-12 w-12 items-center justify-center overflow-hidden rounded-lg bg-soft text-muted">
+                      <template x-if="it.thumb_url"><img :src="imgUrl(it.thumb_url)" alt="" loading="lazy" decoding="async" width="48" height="48" class="h-full w-full object-cover"></template>
+                      <template x-if="!it.thumb_url"><i class="fa-solid fa-triangle-exclamation text-red-500"></i></template></div></td>
+                    <td class="max-w-[14rem] break-all" dir="ltr" x-text="it.filename"></td>
+                    <td><span class="badge" :class="statusOf(it).cls" x-text="statusOf(it).label"></span>
+                      <div class="mt-1 text-xs text-red-600" x-show="it.error" x-text="it.error"></div></td>
+                    <td>
+                      <template x-if="it.product">
+                        <div><div class="font-medium" x-text="it.product.name"></div>
+                          <div class="mt-0.5 flex flex-wrap items-center gap-1 text-xs"><span class="code-chip" x-show="it.product.sku" x-text="it.product.sku"></span><span class="code-chip" x-show="it.product.barcode" x-text="it.product.barcode"></span>
+                            <span class="badge badge-warn" x-show="it.product.has_image" title="المنتج ده عنده صورة بالفعل">عنده صورة</span></div></div>
+                      </template>
+                      <template x-if="!it.product && it.candidates.length">
+                        <div class="space-y-1"><p class="text-xs text-muted">الاسم بيطابق أكتر من منتج، اختار:</p>
+                          <template x-for="c in it.candidates" :key="c.id"><button type="button" class="btn btn-outline btn-sm" @click="assign(it, c.id)"><span x-text="c.name"></span> <span class="code-chip" x-text="c.sku || c.barcode"></span></button></template></div>
+                      </template>
+                      <span x-show="!it.product && !it.candidates.length && it.thumb_url" class="text-xs text-muted">لسه ما اتحددش</span>
+                    </td>
+                    <td><div class="flex items-center gap-1" x-show="it.thumb_url">
+                      <button type="button" class="btn btn-outline btn-sm" @click="openPicker(it)"><i class="fa-solid fa-magnifying-glass"></i><span x-text="it.product ? 'تغيير' : 'اختيار منتج'"></span></button>
+                      <button type="button" class="btn btn-ghost btn-icon btn-sm text-red-600" x-show="it.product" @click="assign(it, null)" title="إلغاء الاختيار" aria-label="إلغاء الاختيار"><i class="fa-solid fa-xmark"></i></button></div></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <p class="empty" x-show="!visibleItems.length">مفيش صور في القسم ده.</p>
+          </div>
+        </div>
+
+        <div class="card card-pad flex flex-wrap items-center justify-between gap-3">
+          <label class="flex cursor-pointer items-center gap-2 text-sm"><input type="checkbox" x-model="replaceExisting"> استبدال الصور الموجودة للمنتجات اللي عندها صورة بالفعل</label>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" class="btn btn-ghost" @click="cancel()" :disabled="applying">إلغاء الدفعة</button>
+            <button type="button" class="btn btn-primary" @click="apply()" :disabled="applying || !batch.counts.matched"><i class="fa-solid fa-spinner animate-spin" x-show="applying"></i><i class="fa-solid fa-check" x-show="!applying"></i>
+              تطبيق <span class="tabular-nums" x-text="batch.counts.matched"></span> صورة</button>
+          </div>
+        </div>
+        <p class="field-err" x-show="error" x-text="error"></p>
+        <p class="text-xs text-muted">الصور اللي ما اتطابقتش أو فيها مشاكل مش هتتحفظ. الدفعة بتتمسح تلقائيًا بعد 24 ساعة لو ما اتطبّقتش.</p>
+      </section>
+    </template>
+
+    <!-- ===== الخطوة 3: النتيجة ===== -->
+    <section class="card card-pad space-y-4" x-show="step === 'done'" x-cloak>
+      <h2 class="text-lg font-bold"><i class="fa-solid fa-circle-check text-brand-500"></i> تم تطبيق الدفعة</h2>
+      <div class="grid grid-cols-2 gap-3 text-center sm:grid-cols-4" x-show="result">
+        <div class="rounded-xl bg-brand-500/10 p-3"><div class="text-xs text-muted">اتربطت</div><div class="text-2xl font-bold tabular-nums text-brand-600" x-text="result && result.applied"></div></div>
+        <div class="rounded-xl bg-amber-500/10 p-3"><div class="text-xs text-muted">اتخطّت (عندها صورة)</div><div class="text-2xl font-bold tabular-nums text-amber-600" x-text="result && result.skipped_existing"></div></div>
+        <div class="rounded-xl bg-slate-500/10 p-3"><div class="text-xs text-muted">غير متطابقة (اتمسحت)</div><div class="text-2xl font-bold tabular-nums" x-text="result && result.unmatched_discarded"></div></div>
+        <div class="rounded-xl bg-red-500/10 p-3"><div class="text-xs text-muted">فشلت</div><div class="text-2xl font-bold tabular-nums text-red-600" x-text="result ? result.failed.length + result.invalid : 0"></div></div>
+      </div>
+      <ul class="space-y-1 text-sm text-red-700 dark:text-red-300" x-show="result && result.failed.length"><template x-for="f in (result ? result.failed : [])" :key="f.filename"><li><span dir="ltr" x-text="f.filename"></span>: <span x-text="f.message"></span></li></template></ul>
+      <div class="flex flex-wrap gap-2"><button type="button" class="btn btn-primary" @click="reset()"><i class="fa-solid fa-plus"></i>دفعة جديدة</button><a href="products.html" class="btn btn-outline">المنتجات</a></div>
+    </section>
+
+    <!-- ===== نافذة اختيار منتج ===== -->
+    <div x-show="picker.open" x-cloak x-transition.opacity class="modal" role="dialog" aria-modal="true" @keydown.escape.window="picker.open = false">
+      <div class="modal-backdrop" @click="picker.open = false"></div>
+      <div class="modal-panel max-w-lg">
+        <div class="modal-head"><div><h2 class="text-lg font-bold">اختيار المنتج</h2><p class="text-xs text-muted" dir="ltr" x-text="picker.item && picker.item.filename"></p></div>
+          <button type="button" class="btn btn-ghost btn-icon btn-sm" @click="picker.open = false" aria-label="إغلاق"><i class="fa-solid fa-xmark"></i></button></div>
+        <div class="modal-body space-y-3">
+          <input type="search" class="input" placeholder="الاسم أو الـ SKU أو الباركود" x-model="picker.q" x-ref="pickerInput" @input.debounce.300ms="searchProducts()" aria-label="بحث عن منتج">
+          <div x-show="picker.loading" class="skeleton h-9"></div>
+          <ul class="divide-y divide-line">
+            <template x-for="p in picker.results" :key="p.id">
+              <li><button type="button" class="flex w-full items-center justify-between gap-3 px-2 py-2.5 text-start hover:bg-soft" @click="assign(picker.item, p.id); picker.open = false">
+                <span class="font-medium" x-text="p.name"></span><span class="flex gap-1"><span class="code-chip" x-show="p.sku" x-text="p.sku"></span><span class="code-chip" x-show="p.barcode" x-text="p.barcode"></span></span></button></li>
+            </template>
+          </ul>
+          <p class="empty" x-show="!picker.loading && picker.q && !picker.results.length">مفيش منتجات مطابقة.</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script type="module" src="js/layout.js"></script>
+<script type="module" src="js/product-images.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
+</body>
+</html>

@@ -42,6 +42,12 @@ uvicorn app.main:app --reload
 **Backup:** خد نسخة احتياطية يومية من MySQL (`mysqldump --single-transaction`) وجرّب الاسترجاع دوريًا — النظام نفسه مبيعملش backup.
 **Rate limits:** حد الدخول ثابت في الـ DB؛ حدود تغيير الباسورد/الاستيراد/إنشاء المستخدمين في ذاكرة كل worker (الحد الفعلي = الحد × عدد الـ workers).
 
+## صور المنتجات
+- **التخزين:** ملفات على disk تحت `MEDIA_DIR` (الافتراضي `backend/media/`) خلف طبقة صغيرة (`app/services/media_store.py`)؛ في الـ DB مفتاح الصورة بس (`products.image_key`). لازم الفولدر ده يتاخد في الـ backup ويفضل ثابت بين الـ deployments. **مش مناسب لـ Vercel/serverless** (مفيش filesystem دائم).
+- **المعالجة:** JPEG/PNG/WebP (بحسب المحتوى الفعلي) ← WebP، أقصى بُعد 1024px + Thumbnail 256px، تصحيح اتجاه EXIF، وشيل الـ metadata. حد الصورة 8MB (`MAX_PRODUCT_IMAGE_MB`).
+- **الرفع:** من صفحة تفاصيل المنتج، أو من Excel (عمود «الصورة» بصور عايمة أو جوه الخلية)، أو بالجملة (ZIP/صور بأسماء = SKU أو باركود) من `product-images.html`.
+- **صيانة:** `python -m app.cli check-images` (ملفات يتيمة وصور مفقودة، `--fix` بيمسح اليتيمة).
+
 ## الاختبارات
 ```bash
 cd backend

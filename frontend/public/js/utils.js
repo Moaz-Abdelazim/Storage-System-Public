@@ -80,6 +80,27 @@ export const KIND = {
   transfer: { label: "نقل", icon: "fa-right-left", tile: "bg-blue-500/10 text-blue-600 dark:text-blue-300", badge: "badge-info" },
 };
 
+// أنواع سجل حركة المنتج (/api/products/{id}/history): الاسم والشارة. الحركة المعكوسة (إلغاء مستند) بتتعرض بشارة حمراء.
+export const HISTORY_KIND = {
+  in: { label: "وارد", icon: "fa-arrow-down", badge: "badge-ok" },
+  out: { label: "صادر", icon: "fa-arrow-up", badge: "bg-orange-500/10 text-orange-700 dark:text-orange-300" },
+  transfer: { label: "نقل", icon: "fa-right-left", badge: "badge-info" },
+  adjustment: { label: "تعديل كمية", icon: "fa-pen-to-square", badge: "badge-warn" },
+  stocktake: { label: "جرد", icon: "fa-clipboard-check", badge: "badge-mute" },
+};
+export function historyKind(row) {
+  const base = HISTORY_KIND[row && row.kind] || { label: "حركة", icon: "fa-circle", badge: "badge-mute" };
+  if (row && row.is_reversal) return { ...base, label: `إلغاء ${base.label}`, icon: "fa-rotate-left", badge: "badge-bad" };
+  return base;
+}
+// الكمية بإشارتها: وارد +، صادر −، نقل من غير إشارة (مبيغيّرش الإجمالي)، تعديل/جرد بإشارة الفرق
+export function signedQty(row) {
+  if (!row) return "";
+  if (row.kind === "transfer") return num(row.quantity);
+  const d = Number(row.delta) || 0;
+  return (d > 0 ? "+" : d < 0 ? "−" : "") + num(Math.abs(d));
+}
+
 // الـ CSP (style-src 'self') بيمنع سمة style="..." في أي HTML بيتحط بـ innerHTML. القوالب بتكتب data-s="..." وبعد الإدراج بننقلها لـ element.style
 // (تعديل الـ CSSOM مسموح بالـ CSP). مفيش أي 'unsafe-inline'.
 export function applyDataStyles(root = document) {

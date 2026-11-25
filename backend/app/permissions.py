@@ -193,12 +193,25 @@ for _name in ("categories", "brands"):
         "DELETE /{item_id}": (ALL, ("catalog.delete",)),
     })
 
+_add("/api/product-images", {
+    "POST /batches": (ALL, ("products.edit",)),
+    "GET /batches/{token}": (ALL, ("products.edit",)),
+    "GET /batches/{token}/items/{item_id}/thumb": (ALL, ("products.edit",)),
+    "PUT /batches/{token}/items/{item_id}": (ALL, ("products.edit",)),
+    "POST /batches/{token}/apply": (ALL, ("products.edit",)),
+    "DELETE /batches/{token}": (ALL, ("products.edit",)),
+})
+
 _add("/api/products", {
     "GET ": (ANY, PRODUCT_READ),
     "GET /lookup": (ANY, PRODUCT_READ),
     "GET /by-barcode/{code}": (ANY, PRODUCT_READ),
     "GET /{product_id}": (ANY, PRODUCT_READ),
     "GET /{product_id}/movements": (ALL, ("invoices.view",)),
+    "GET /{product_id}/history": (ANY, ("invoices.view", "transfers.view", "reports.view", "stocktake.manage")),
+    "GET /{product_id}/image": (ANY, PRODUCT_READ),
+    "PUT /{product_id}/image": (ALL, ("products.edit",)),
+    "DELETE /{product_id}/image": (ALL, ("products.edit",)),
     "POST ": (ALL, ("products.create",)),
     "PUT /{product_id}": (ALL, ("products.edit",)),
     "PUT /{product_id}/locations": (ALL, ("products.adjust",)),

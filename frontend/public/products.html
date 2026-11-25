@@ -28,6 +28,7 @@
       <div class="flex flex-wrap items-center gap-2">
         <button type="button" class="btn btn-outline" @click="exportExcel()" :disabled="exporting"><i class="fa-solid fa-file-excel text-green-600"></i>تصدير Excel</button>
         <a href="settings.html#import" class="btn btn-outline"><i class="fa-solid fa-file-import"></i>استيراد</a>
+        <a href="product-images.html" class="btn btn-outline" x-show="canEdit" x-cloak><i class="fa-regular fa-images"></i>رفع صور بالجملة</a>
         <button type="button" class="btn btn-primary" x-show="canCreate" @click="openForm()"><i class="fa-solid fa-plus"></i>إضافة منتج</button>
       </div>
     </div>
@@ -77,6 +78,7 @@
         <table class="tbl">
           <thead>
             <tr>
+              <th class="w-14"><span class="sr-only">الصورة</span></th>
               <th><button type="button" class="inline-flex items-center gap-1.5" @click="sortBy('name')">المنتج<i class="fa-solid text-[10px]" :class="sortIcon('name')"></i></button></th>
               <th>التصنيف / الماركة</th>
               <th><button type="button" class="inline-flex items-center gap-1.5" @click="sortBy('quantity')">الكمية<i class="fa-solid text-[10px]" :class="sortIcon('quantity')"></i></button></th>
@@ -87,14 +89,20 @@
             </tr>
           </thead>
           <tbody>
-            <template x-if="loading && !rows.length"><template x-for="i in 8"><tr><td colspan="8"><div class="skeleton h-7"></div></td></tr></template></template>
+            <template x-if="loading && !rows.length"><template x-for="i in 8"><tr><td colspan="9"><div class="skeleton h-7"></div></td></tr></template></template>
             <template x-for="p in rows" :key="p.id">
-              <tr :class="loading && 'opacity-60'">
+              <tr :class="[loading && 'opacity-60', 'cursor-pointer hover:bg-soft']" @click="rowClick(p, $event)">
                 <td>
-                  <button type="button" class="text-start" @click="openDetail(p)">
+                  <div class="flex h-11 w-11 items-center justify-center overflow-hidden rounded-lg bg-soft text-muted">
+                    <template x-if="p.thumb_url"><img :src="imgUrl(p.thumb_url)" alt="" loading="lazy" decoding="async" width="44" height="44" class="h-full w-full object-cover"></template>
+                    <template x-if="!p.thumb_url"><i class="fa-regular fa-image opacity-40"></i></template>
+                  </div>
+                </td>
+                <td>
+                  <a :href="pageUrl(p)" class="block text-start">
                     <div class="font-medium hover:text-brand-600" x-text="p.name"></div>
                     <div class="mt-0.5 flex flex-wrap gap-1" x-show="p.sku || p.barcode"><span class="code-chip" x-show="p.sku" x-text="p.sku"></span><span class="code-chip" x-show="p.barcode"><i class="fa-solid fa-barcode"></i> <span x-text="p.barcode"></span></span></div>
-                  </button>
+                  </a>
                 </td>
                 <td>
                   <div x-text="p.category_name || '—'"></div>
@@ -118,13 +126,13 @@
                 <td>
                   <div class="space-y-1">
                     <template x-for="l in p.locations.slice(0, 3)" :key="l.location_id"><div class="flex h-6 items-center font-bold tabular-nums" x-text="num(l.quantity)"></div></template>
-                    <div class="h-6" x-show="p.locations.length > 3"><button type="button" class="text-xs font-medium text-brand-600 hover:underline" @click="openDetail(p)">عرض الكل</button></div>
+                    <div class="h-6" x-show="p.locations.length > 3"><a :href="pageUrl(p)" class="text-xs font-medium text-brand-600 hover:underline">عرض الكل</a></div>
                   </div>
                 </td>
                 <td><span class="badge" :class="statusOf(p).cls" x-text="statusOf(p).label"></span></td>
                 <td>
                   <div class="flex items-center gap-0.5">
-                    <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تفاصيل وحركات" @click="openDetail(p)"><i class="fa-regular fa-eye"></i></button>
+                    <a :href="pageUrl(p)" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تفاصيل وحركات"><i class="fa-regular fa-eye"></i></a>
                     <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="توزيع الكمية على الأماكن" x-show="canAdjust" @click="openLocations(p)"><i class="fa-solid fa-location-dot"></i></button>
                     <button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" title="تعديل" x-show="canEdit" @click="openForm(p)"><i class="fa-solid fa-pen"></i></button>
                     <template x-if="canToggle"><button type="button" class="btn btn-ghost btn-icon btn-sm !h-8 !w-8" :title="p.is_active === false ? 'تفعيل' : 'تعطيل'" @click="toggleActive(p)"><i class="fa-solid" :class="p.is_active === false ? 'fa-toggle-off' : 'fa-toggle-on text-brand-500'"></i></button></template>
@@ -209,56 +217,6 @@
         <div class="modal-foot"><button type="button" class="btn btn-outline" @click="loc.open = false">إلغاء</button>
           <button type="submit" class="btn btn-primary" :disabled="loc.saving"><i class="fa-solid fa-spinner animate-spin" x-show="loc.saving"></i>حفظ التوزيع</button></div>
       </form>
-    </div>
-
-    <!-- ===== نافذة التفاصيل ===== -->
-    <div x-show="detail.open" x-cloak x-transition.opacity class="modal" role="dialog" aria-modal="true" @keydown.escape.window="detail.open = false">
-      <div class="modal-backdrop" @click="detail.open = false"></div>
-      <div class="modal-panel max-w-3xl">
-        <div class="modal-head">
-          <div><h2 class="text-lg font-bold" x-text="detail.product && detail.product.name"></h2>
-            <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted"><span class="code-chip" x-show="detail.product && detail.product.sku" x-text="detail.product && detail.product.sku"></span>
-              <span class="badge" :class="detail.product && statusOf(detail.product).cls" x-text="detail.product && statusOf(detail.product).label"></span></div></div>
-          <button type="button" class="btn btn-ghost btn-icon btn-sm" @click="detail.open = false" aria-label="إغلاق"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-        <div class="flex border-b border-line px-3">
-          <button type="button" class="tab" :class="detail.tab === 'locations' && 'tab-on'" @click="detail.tab = 'locations'">الأماكن</button>
-          <button type="button" class="tab" x-show="canMovements" :class="detail.tab === 'in' && 'tab-on'" @click="loadMovements('in', 1)">الوارد</button>
-          <button type="button" class="tab" x-show="canMovements" :class="detail.tab === 'out' && 'tab-on'" @click="loadMovements('out', 1)">الصادر</button>
-        </div>
-        <div class="modal-body">
-          <div x-show="detail.tab === 'locations'">
-            <div class="mb-4 grid grid-cols-2 gap-3 text-center sm:grid-cols-3">
-              <div class="rounded-xl bg-soft p-3"><div class="kpi-label">الفعلي</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="detail.product && num(detail.product.quantity)"></div></div>
-              <div class="rounded-xl bg-soft p-3"><div class="kpi-label">المحجوز</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="detail.product && num(detail.product.reserved)"></div></div>
-              <div class="rounded-xl bg-soft p-3"><div class="kpi-label">المتاح</div><div class="mt-1 text-xl font-bold tabular-nums text-brand-600" x-text="detail.product && num(detail.product.available)"></div></div>
-              <div class="rounded-xl bg-soft p-3"><div class="kpi-label">الحد الأدنى</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="detail.product && num(detail.product.min_quantity)"></div></div>
-              <div class="rounded-xl bg-soft p-3"><div class="kpi-label">السعر</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="detail.product && money(detail.product.price)"></div></div>
-            </div>
-            <ul class="divide-y divide-line">
-              <template x-for="l in (detail.product ? detail.product.locations : [])" :key="l.location_id">
-                <li class="flex items-center justify-between py-2.5 text-sm"><loc-code :code="l.full_code"></loc-code><span class="text-end"><span class="font-bold tabular-nums" x-text="num(l.quantity)" title="الفعلي"></span><span class="block text-xs text-muted" x-show="l.reserved > 0" x-cloak x-text="'محجوز ' + num(l.reserved) + ' · متاح ' + num(l.available)"></span></span></li>
-              </template>
-            </ul>
-            <p class="empty" x-show="detail.product && !detail.product.locations.length">المنتج ده مش متوزع على أماكن تخزين.</p>
-          </div>
-          <template x-for="kind in ['in', 'out']" :key="kind">
-            <div x-show="detail.tab === kind">
-              <div x-show="detail.loading" class="space-y-2"><div class="skeleton h-8"></div><div class="skeleton h-8"></div><div class="skeleton h-8"></div></div>
-              <div class="overflow-x-auto" x-show="!detail.loading && detail.mv.items.length">
-                <table class="tbl"><thead><tr><th>المستند</th><th>التاريخ</th><th x-text="kind === 'in' ? 'المورد' : 'الجهة'"></th><th>الكمية</th><th>السعر</th><th>بواسطة</th></tr></thead>
-                  <tbody><template x-for="m in detail.mv.items" :key="kind + m.invoice_id + m.date">
-                    <tr><td><a :href="'invoice.html#kind=' + kind + '&id=' + m.invoice_id" class="font-medium text-brand-600 hover:underline" x-text="'#' + m.invoice_id"></a></td>
-                      <td class="text-muted" x-text="fmtDateTime(m.date)"></td><td x-text="m.party_name || '—'"></td>
-                      <td class="font-bold tabular-nums" :class="kind === 'in' ? 'text-brand-600' : 'text-orange-600'" x-text="(kind === 'in' ? '+' : '−') + num(m.quantity)"></td>
-                      <td class="tabular-nums" x-text="m.unit_price != null ? money(m.unit_price) : '—'"></td><td class="text-muted" x-text="m.user_name || '—'"></td></tr></template></tbody></table>
-              </div>
-              <p class="empty" x-show="!detail.loading && !detail.mv.items.length">مفيش حركات لسه.</p>
-              <ui-pager x-show="detail.tab === kind" :page="detail.mv.page" :pages="detail.mv.total_pages" :total="detail.mv.total" :size="detail.mv.page_size" @go="loadMovements(kind, $event.detail)"></ui-pager>
-            </div>
-          </template>
-        </div>
-      </div>
     </div>
 
   </div>

@@ -34,7 +34,7 @@ from . import observability
 from .database import engine
 from .project_config import app_description, app_name
 from .routers import auth as auth_router, roles as roles_router
-from .routers import products, suppliers, recipients, stock, reports, excel_io, categories, brands, locations, location_nav, dashboard, analytics, executive_report, company, invoice_print, stocktake, setup, settings as settings_router, audit_log, app_info
+from .routers import products, suppliers, recipients, stock, reports, excel_io, categories, brands, locations, location_nav, dashboard, analytics, executive_report, company, invoice_print, stocktake, setup, settings as settings_router, audit_log, app_info, product_images, product_history, product_image_batches
 
 load_dotenv()
 
@@ -87,6 +87,8 @@ async def inconsistent_stock_handler(request: Request, exc: InconsistentStock):
 # ---------- أمان: هيدرز + حد لحجم الطلب ----------
 # (حماية تسجيل الدخول من التخمين جوه routers/auth.py عن طريق app/security.py)
 MAX_BODY_BYTES = 12 * 1024 * 1024  # أكبر طلب مسموح (رفع Excel بحد أقصى 10 ميجا + هامش)
+MAX_IMAGE_BATCH_BODY_BYTES = 64 * 1024 * 1024  # استثناء لمسار رفع الصور بالجملة (ZIP) بس
+IMAGE_BATCH_PATH = "/api/product-images/batches"
 
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -102,7 +104,8 @@ def _origin_allowed(origin: str, request: Request) -> bool:
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     length = request.headers.get("content-length")
-    if length and length.isdigit() and int(length) > MAX_BODY_BYTES:
+    limit = MAX_IMAGE_BATCH_BODY_BYTES if (request.method == "POST" and request.url.path == IMAGE_BATCH_PATH) else MAX_BODY_BYTES
+    if length and length.isdigit() and int(length) > limit:
         return JSONResponse(status_code=413, content={"detail": "حجم الطلب كبير جدًا"})
 
     # ---- حماية CSRF: الجلسة في cookie بتتبعت أوتوماتيك، فأي طلب تعديل (من غير Authorization header) لازم:
@@ -184,6 +187,9 @@ app.include_router(roles_router.router)
 app.include_router(categories.router)
 app.include_router(brands.router)
 app.include_router(products.router)
+app.include_router(product_images.router)
+app.include_router(product_history.router)
+app.include_router(product_image_batches.router)
 app.include_router(suppliers.router)
 app.include_router(recipients.router)
 app.include_router(stock.router)

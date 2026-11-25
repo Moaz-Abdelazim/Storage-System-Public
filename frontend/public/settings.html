@@ -115,16 +115,28 @@
         <span class="text-xs text-muted">xlsx — بحد أقصى 10 ميجا</span>
         <input type="file" class="sr-only" accept=".xlsx" @change="pick($event.target.files[0]); $event.target.value = ''">
       </label>
+      <p class="mt-3 text-xs leading-relaxed text-muted"><i class="fa-regular fa-image"></i> لو الملف فيه صور المنتجات (في عمود «الصورة»، سواء Place in Cell أو Place Over Cells) هتتربط بكل منتج حسب صفه. صورة واحدة لكل منتج، والمنتج اللي عنده صورة بيتخطى. عندك صور منفصلة؟ <a href="product-images.html" class="font-medium text-brand-600 hover:underline">ارفعها بالجملة بالـ SKU أو الباركود</a>.</p>
+      <label class="mt-2 flex cursor-pointer items-center gap-2 text-sm"><input type="checkbox" x-model="replaceImages"> استبدال صور المنتجات اللي عندها صورة بالفعل</label>
 
       <div class="mt-4 flex items-center gap-3"><button type="button" class="btn btn-primary" @click="importFile()" :disabled="!file || importing"><i class="fa-solid fa-spinner animate-spin" x-show="importing"></i><i class="fa-solid fa-upload" x-show="!importing"></i>بدء الاستيراد</button>
         <button type="button" class="btn btn-ghost" @click="file = null; result = null" x-show="file" x-cloak>إلغاء</button></div>
 
       <div class="mt-5 space-y-3" x-show="result" x-cloak>
-        <div class="grid grid-cols-3 gap-3 text-center">
+        <div class="grid grid-cols-2 gap-3 text-center sm:grid-cols-4">
           <div class="rounded-xl bg-brand-500/10 p-3"><div class="text-xs text-muted">منتجات جديدة</div><div class="text-2xl font-bold tabular-nums text-brand-600" x-text="result && result.created"></div></div>
           <div class="rounded-xl bg-blue-500/10 p-3"><div class="text-xs text-muted">اتحدّثت</div><div class="text-2xl font-bold tabular-nums text-blue-600" x-text="result && result.updated"></div></div>
           <div class="rounded-xl bg-red-500/10 p-3"><div class="text-xs text-muted">أخطاء</div><div class="text-2xl font-bold tabular-nums text-red-600" x-text="result && result.errors_total"></div></div>
+          <div class="rounded-xl bg-amber-500/10 p-3"><div class="text-xs text-muted">صور اتربطت</div><div class="text-2xl font-bold tabular-nums text-amber-600" x-text="result && result.images_saved"></div></div>
         </div>
+        <p class="text-xs text-muted" x-show="result && result.images_skipped" x-cloak x-text="'اتخطّى ' + (result ? result.images_skipped : 0) + ' منتج عنده صورة بالفعل (فعّل الاستبدال لو عايز تغيّرها).'"></p>
+        <!-- مشاكل الصور: صف + السبب. صورة تالفة مبتأثرش على باقي المنتجات -->
+        <div class="max-h-72 overflow-auto rounded-xl border border-line" x-show="result && result.image_errors.length" x-cloak>
+          <table class="tbl">
+            <thead><tr><th class="w-20">الصف</th><th>مشكلة في الصورة</th></tr></thead>
+            <tbody><template x-for="(e, i) in (result ? result.image_errors : [])" :key="'img' + i"><tr><td class="tabular-nums" x-text="e.row ?? '—'"></td><td class="whitespace-normal text-amber-700 dark:text-amber-300" x-text="errText(e)"></td></tr></template></tbody>
+          </table>
+        </div>
+        <p class="text-xs text-muted" x-show="result && result.image_truncated" x-cloak>اتعرض أول مشاكل الصور بس.</p>
         <!-- أخطاء منظمة {row, column, message}: صف في الملف + العمود + السبب (بحد أقصى 500 مع عدّاد الإجمالي) -->
         <div class="max-h-72 overflow-auto rounded-xl border border-line" x-show="result && result.errors.length" x-cloak>
           <table class="tbl">

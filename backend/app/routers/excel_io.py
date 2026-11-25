@@ -19,8 +19,10 @@ from ..timezone_utils import now_cairo
 from ..barcode import barcode_conflict, normalize_excel_barcode, sku_conflicts_with_barcode
 from ..money import q3
 from ..rate_limit import limit_per_user
-from ..services import inventory
+from ..services import inventory, product_images, xlsx_images
 from ..services.audit import audit
+from ..services.images import ImageError
+from ..services.media_store import get_store
 
 _log = logging.getLogger("app.excel")
 MAX_EXPORT_ROWS = 100_000  # حد أقصى لعدد صفوف كل شيت في تصدير الحركات (حماية الذاكرة)
@@ -30,7 +32,7 @@ router = APIRouter(prefix="/api/excel", tags=["Excel Import/Export"])
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB
 MAX_IMPORT_ROWS = 20000
 MAX_UNCOMPRESSED_BYTES = 80 * 1024 * 1024  # حماية من zip bomb: xlsx ملف zip، حجمه بعد الفك لازم يفضل معقول
-MAX_ZIP_ENTRIES = 200
+MAX_ZIP_ENTRIES = xlsx_images.MAX_IMAGES + 200  # كل صورة مضمنة = ملف في الـ zip (xl/media/*) فلازم الحد يستوعب أقصى عدد صور + ملفات الهيكل؛ الحماية الأساسية من zip bomb هي الحجم الكلي بعد الفك
 
 
 def _validate_xlsx_container(content: bytes) -> None:
@@ -100,6 +102,28 @@ _ACTIVE_YES = {"مفعل", "فعال", "نشط", "active", "enabled", "yes", "y"
 _ACTIVE_NO = {"غير مفعل", "غير فعال", "غير نشط", "معطل", "موقوف", "inactive", "disabled", "no", "n", "false", "0", "لا"}
 
 
+IMAGE_COLUMN = "الصورة"
+_IMAGE_HEADERS = {"الصورة", "صورة", "الصوره", "صوره", "صورة المنتج", "image", "images", "photo", "picture", "img", "product image"}
+
+
+def _image_column_index(content: bytes) -> Optional[int]:
+    """رقم عمود «الصورة» في الشيت (1-based) من صف العناوين، أو None لو مفيش عمود بالاسم ده."""
+    try:
+        from openpyxl import load_workbook
+
+        wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        try:
+            for row in wb.worksheets[0].iter_rows(min_row=1, max_row=1, min_col=1, values_only=True):
+                for i, v in enumerate(row, start=1):
+                    if v is not None and " ".join(str(v).strip().lower().split()) in _IMAGE_HEADERS:
+                        return i
+        finally:
+            wb.close()
+    except Exception:
+        _log.warning("excel import: could not read header row for image column", exc_info=True)
+    return None
+
+
 def _parse_active(value):
     """True = مفعّل، False = غير مفعّل، None = الخلية فاضية. بترمي ValueError لو القيمة مش مفهومة."""
     if pd.isna(value):
@@ -115,10 +139,45 @@ def _parse_active(value):
     raise ValueError(value)
 
 
-def _sheet_bytes(df, instructions=None):
+MAX_EXPORT_IMAGES = 3000      # سقف الصور المضمنة في ملف التصدير (حماية الذاكرة وحجم الملف)
+_EXPORT_IMG_PX = 88           # أقصى بُعد للصورة جوه الخلية
+_EXPORT_ROW_PT = 72           # ارتفاع الصف اللي فيه صورة (نقطة) = ~96 بكسل
+
+
+def _export_image_bytes(key: str) -> Optional[bytes]:
+    """الصورة المصغّرة (thumb) محوّلة لصيغة تفتحها كل نسخ Excel (JPEG، أو PNG لو فيها شفافية) وبحجم مناسب للخلية."""
+    data = get_store().read(key, "thumb.webp")
+    if data is None:
+        return None
+    from PIL import Image
+
+    with Image.open(io.BytesIO(data)) as im:
+        im.load()
+        im.thumbnail((_EXPORT_IMG_PX, _EXPORT_IMG_PX), Image.Resampling.LANCZOS)
+        out = io.BytesIO()
+        if im.mode == "RGBA":
+            im.save(out, "PNG", optimize=True)
+        else:
+            im.convert("RGB").save(out, "JPEG", quality=85)
+        return out.getvalue()
+
+
+def _sheet_bytes(df, instructions=None, row_images=None):
+    """row_images: {صف Excel: bytes} بتتحط في عمود «الصورة» (لو موجود في df) وبيتظبط ارتفاع الصف."""
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         df.pipe(_safe_df).to_excel(writer, index=False, sheet_name="المنتجات")
+        if row_images and IMAGE_COLUMN in df.columns:
+            from openpyxl.drawing.image import Image as XLImage
+            from openpyxl.utils import get_column_letter
+
+            ws = writer.sheets["المنتجات"]
+            col_letter = get_column_letter(list(df.columns).index(IMAGE_COLUMN) + 1)
+            ws.column_dimensions[col_letter].width = 16
+            for row_no, blob in row_images.items():
+                xl = XLImage(io.BytesIO(blob))
+                ws.add_image(xl, f"{col_letter}{row_no}")
+                ws.row_dimensions[row_no].height = _EXPORT_ROW_PT
         if "الباركود" in df.columns:
             # عمود الباركود نص: Excel مايشيلش الأصفار من الأول ومايحوّلهوش لصيغة علمية لما المستخدم يكتب/يعدّل
             ws = writer.sheets["المنتجات"]
@@ -132,11 +191,14 @@ def _sheet_bytes(df, instructions=None):
 
 
 @router.get("/products/export")
-def export_products(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_permission("products.export"))):
+def export_products(with_images: bool = True, db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_permission("products.export"))):
+    """تصدير المنتجات. with_images (الافتراضي): الصورة الأساسية (مصغّرة) في عمود «الصورة» بجانب أول صف لكل منتج (بحد MAX_EXPORT_IMAGES؛ المتخطّي بيتبلّغ في هيدر X-Images-Omitted)."""
     idx = LocationIndex(db)
     products = db.query(models.Product).order_by(models.Product.name).all()
     data = []
+    first_row_of = {}   # product.id -> رقم صف Excel لأول صف للمنتج
     for p in products:
+        first_row_of[p.id] = len(data) + 2
         base = {
             "ID": p.id, "SKU": p.sku, "الباركود": p.barcode, "الاسم": p.name,
             "التصنيف": p.category.name if p.category else None,
@@ -150,21 +212,32 @@ def export_products(db: Session = Depends(get_db), current_user: models.User = D
             data.append({**base, "الموقع": idx.full_code(pl.location_id), "الكمية": pl.quantity})
         if not locs:
             data.append({**base, "الموقع": None, "الكمية": 0})
-    df = pd.DataFrame(data, columns=PRODUCT_COLUMNS)
-    buffer = _sheet_bytes(df)
+    row_images, omitted = {}, 0
+    if with_images:
+        for p in products:
+            if not p.image_key:
+                continue
+            blob = _export_image_bytes(p.image_key) if len(row_images) < MAX_EXPORT_IMAGES else None
+            if blob is None:
+                omitted += 1
+            else:
+                row_images[first_row_of[p.id]] = blob
+    df = pd.DataFrame(data, columns=PRODUCT_COLUMNS + ([IMAGE_COLUMN] if with_images else []))
+    buffer = _sheet_bytes(df, row_images=row_images)
 
     filename = f"products_export_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    headers = {"Content-Disposition": f"attachment; filename={filename}", "X-Images-Included": str(len(row_images)), "X-Images-Omitted": str(omitted)}
     return StreamingResponse(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers=headers,
     )
 
 
 @router.get("/products/template")
 def download_template(_user: models.User = Depends(auth.require_permission("products.import"))):
     """شيت فاضي بنفس الأعمدة عشان تعرف تملأه صح (+ شيت تعليمات للمواقع)."""
-    df = pd.DataFrame(columns=PRODUCT_COLUMNS)
+    df = pd.DataFrame(columns=PRODUCT_COLUMNS + [IMAGE_COLUMN])
     buffer = _sheet_bytes(df, instructions=[
         "عمود الموقع = الكود الكامل للمكان، مثال: W1-F3-R5 (لازم يكون معرّف مسبقًا في صفحة إدارة المواقع).",
         "الاستيراد ما بينشئش مواقع جديدة - أي صف بكود موقع مش موجود بيتم رفضه وبيظهر سببه.",
@@ -175,6 +248,8 @@ def download_template(_user: models.User = Depends(auth.require_permission("prod
         "عمود الباركود اختياري. اكتبه كنص (العمود متنسّق كنص) عشان الأصفار في الأول ماتتشالش، وأي باركود بصيغة علمية (1.23E+12) بيترفض. خلية الباركود الفاضية ما بتمسحش باركود موجود.",
         "الباركود لازم يكون مميز لكل منتج ومينفعش يساوي SKU منتج تاني. المطابقة بالترتيب: ID ثم SKU ثم الباركود ثم الاسم.",
         "عمود الحالة: اكتب مفعّل أو غير مفعّل. لو سبته فاضي: المنتج الجديد بيتعمل مفعّل، والمنتج الموجود حالته ما بتتغيّرش.",
+        "عمود الصورة (اختياري): حط صورة المنتج في خلية عمود «الصورة» في نفس صف المنتج (Insert > Pictures، سواء Place in Cell أو Place Over Cells). اتأكد إن الصورة جوه الخلية أو على نفس الصف مش ماسكة صفوف تانية.",
+        "صورة واحدة لكل منتج (JPEG أو PNG أو WebP، لحد 8 ميجا). المنتج اللي عنده صورة بالفعل بيتخطى إلا لو اخترت «استبدال الصور الموجودة». صورة تالفة بتتبلّغ برقم الصف وباقي المنتجات بتتحفظ عادي.",
     ])
     return StreamingResponse(
         buffer,
@@ -193,9 +268,12 @@ class _ImportErrors:
     def __init__(self):
         self.items = []
         self.total = 0
+        self.rows = set()   # كل الصفوف اللي اتسجّل عليها خطأ (حتى لو عدّت سقف العرض)
 
     def add(self, row, column, message):
         self.total += 1
+        if row is not None:
+            self.rows.add(row)
         if len(self.items) < MAX_REPORTED_ERRORS:
             self.items.append({"row": row, "column": column, "message": message})
 
@@ -208,11 +286,14 @@ class _ImportErrors:
 def import_products(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    replace_images: bool = False,
     current_user: models.User = Depends(auth.require_permission("products.import")),
     _limit: None = Depends(limit_per_user("excel_import", 20, 60 * 60)),
 ):
     """
-    استيراد منتجات من Excel. المطابقة بالترتيب: ID ثم SKU ثم الباركود، والاسم **جوه الملف بس** (منتج من غير ID/SKU/باركود = منتج جديد).
+    استيراد منتجات من Excel (مع الصور المضمنة: عايمة أو جوه الخلية، مربوطة بالصف من إحداثيات الـ anchor وبعمود «الصورة» لو موجود).
+    الصور بتتحفظ بعد المنتجات: صورة تالفة/مرفوضة بتتبلّغ برقم الصف ومبتأثرش على باقي المنتجات. المنتج اللي ليه صورة بالفعل بيتخطى إلا لو replace_images=1.
+    المطابقة بالترتيب: ID ثم SKU ثم الباركود، والاسم **جوه الملف بس** (منتج من غير ID/SKU/باركود = منتج جديد).
     الأداء: خرائط (id/sku/barcode) بتتحمّل مرة واحدة في الذاكرة بدل استعلام لكل صف، والكتابة على دفعات ~500 منتج في commit واحد
     (لو دفعة فشلت بنعيدها منتج منتج عشان الغلطة تتحدد). الأخطاء بشكل {row, column, message} وبسقف 500 مع عدّاد.
     """
@@ -243,6 +324,13 @@ def import_products(
     has_status_col = "الحالة" in df.columns
 
     errors = _ImportErrors()
+    img_errors = _ImportErrors()      # مشاكل الصور (منفصلة عن أخطاء الصفوف)
+    ext = xlsx_images.ExtractedImages()
+    if xlsx_images.has_candidate_images(content):
+        ext = xlsx_images.extract_images(content, image_col=_image_column_index(content), first_data_row=2)
+        for prob in ext.problems:
+            img_errors.add(prob.row, IMAGE_COLUMN, prob.message)
+    img_by_row = ext.by_row            # {صف Excel: [صور]} - بيتشال منها اللي اتربط
     P = models.Product
     idx = LocationIndex(db)
 
@@ -374,6 +462,9 @@ def import_products(
                         min_quantity=_num(row.get("حد الطلب الأدنى")), is_active=is_active,
                     ),
                 }
+            rimgs = img_by_row.pop(rn, None)
+            if rimgs:
+                entry.setdefault("images", []).append((rn, rimgs))
             if location_id:
                 if location_id in entry["loc_rows"]:
                     errors.add(rn, "الموقع", f"نفس المنتج ونفس الموقع ({idx.full_code(location_id)}) مكرر في الملف - اجمع الكميات في صف واحد")
@@ -382,6 +473,13 @@ def import_products(
         except Exception:
             _log.exception("excel import: row %s failed", rn)
             errors.add(rn, None, "خطأ غير متوقع في قراءة الصف - راجع بيانات الصف")
+
+    # صور فضلت من غير ما تتربط: صف مرفوض (الخطأ اتسجّل عليه) أو صف مفيهوش بيانات منتج
+    for row_no in sorted(img_by_row):
+        if row_no in errors.rows:
+            img_errors.add(row_no, IMAGE_COLUMN, f"صورة الصف {row_no} اتجاهلت لأن بيانات الصف مرفوضة (شوف خطأ الصف)")
+        else:
+            img_errors.add(row_no, IMAGE_COLUMN, f"صورة في الصف {row_no} من غير بيانات منتج في الصف ده؛ مش هتتربط")
 
     # ---- تصنيفات/ماركات جديدة: مرة واحدة قبل الدفعات ----
     category_cache = {c.name: c.id for c in db.query(models.Category).all()}
@@ -446,6 +544,7 @@ def import_products(
                     changed_by_id=current_user.id, changed_by_username=current_user.username,
                     reason="استيراد Excel", date=now_cairo(),
                 ))
+        entry["pid"] = product.id  # للصور: بيتمسح لو الدفعة فشلت (مفيش صورة تتربط بمنتج متحفظش)
         return True
 
     def run_batch(batch) -> None:
@@ -462,6 +561,8 @@ def import_products(
             db.commit()
         except Exception:
             db.rollback()
+            for entry in batch:
+                entry.pop("pid", None)
             # رجّع العدّادات لما قبل الدفعة وأعدها منتج منتج (commit لكل واحد) عشان نعرف المنتج الغلطان بالظبط
             stats["created"], stats["updated"] = snapshot[0], snapshot[1]
             errors.total, del_from = snapshot[2], snapshot[3]
@@ -472,21 +573,61 @@ def import_products(
                     db.commit()
                 except Exception as exc:
                     db.rollback()
+                    entry.pop("pid", None)
                     _log.exception("excel import: product %s failed", entry.get("name"))
                     if isinstance(exc, (inventory.BelowReserved, inventory.InsufficientStock)):
                         errors.add(entry["row"], "الكمية", f"({entry['name']}): {exc}")
                     else:
                         errors.add(entry["row"], None, f"({entry['name']}): تعذّر حفظ المنتج")
 
+    # ---- المرحلة 3: الصور (بعد ما المنتجات اتحفظت؛ كل صورة في commit لوحدها) ----
+    images_saved = images_skipped = 0
+    for entry in all_entries:
+        located = entry.get("images")
+        if not located:
+            continue
+        flat = [(rn, im) for rn, group in located for im in group]       # بالترتيب: صف ثم عمود
+        first_row, first = flat[0]
+        for rn, im in flat[1:]:
+            if im.crc != first.crc or im.size != first.size:               # نفس الصورة متكررة على صفوف المنتج = عادي
+                img_errors.add(rn, IMAGE_COLUMN, f"({entry['name']}): صورة زيادة لنفس المنتج اتجاهلت (صورة واحدة لكل منتج، اتاخدت صورة الصف {first_row})")
+        pid = entry.get("pid")
+        if not pid:
+            continue  # المنتج نفسه اترفض/فشل وخطأه اتسجّل
+        product = db.get(models.Product, pid)
+        if product is None:
+            continue
+        if product.image_key and not replace_images:
+            images_skipped += 1
+            continue
+        try:
+            product_images.replace_product_image(db, product, ext.read(first), current_user, source="excel")
+            images_saved += 1
+        except ImageError as exc:
+            img_errors.add(first_row, IMAGE_COLUMN, f"({entry['name']}): {exc}")
+        except Exception:
+            db.rollback()
+            _log.exception("excel import: image for product %s failed", entry.get("name"))
+            img_errors.add(first_row, IMAGE_COLUMN, f"({entry['name']}): تعذّر حفظ الصورة")
+
     created, updated = stats["created"], stats["updated"]
     message = f"تم إضافة {created} منتج وتحديث {updated} منتج"
+    if images_saved:
+        message += f" وربط {images_saved} صورة"
+    if images_skipped:
+        message += f" (تخطّي {images_skipped} منتج عنده صورة بالفعل)"
     if errors.total:
         message += f" - وتم رفض/تجاهل {errors.total} صف (راجع التفاصيل)"
+    if img_errors.total:
+        message += f" - و{img_errors.total} مشكلة في الصور (راجع التفاصيل)"
     audit(db, current_user, "import", "products", "excel_import",
-          {"created": created, "updated": updated, "errors": errors.total, "rows": int(len(df))})
+          {"created": created, "updated": updated, "errors": errors.total, "rows": int(len(df)),
+           "images_saved": images_saved, "image_errors": img_errors.total})
     db.commit()
     return {"created": created, "updated": updated, "errors": errors.items, "errors_total": errors.total,
-            "errors_truncated": errors.truncated, "message": message}
+            "errors_truncated": errors.truncated, "message": message,
+            "images_saved": images_saved, "images_skipped_existing": images_skipped, "images_found": ext.total,
+            "image_errors": img_errors.items, "image_errors_total": img_errors.total, "image_errors_truncated": img_errors.truncated}
 
 
 def _strict_num(value):

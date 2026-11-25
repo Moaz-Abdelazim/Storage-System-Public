@@ -6,6 +6,9 @@
 // =====================================================================
 import { API_BASE } from "./config.js";
 
+// رابط كامل لمسار API (للصور: <img src> بيبعت الكوكي لوحده). المسارات اللي بترجع من السيرفر نسبية (/api/...)
+export const apiUrl = (path) => (path ? `${API_BASE}${path}` : "");
+
 export class ApiError extends Error {
   constructor(status, message, data = null) {
     super(message);
@@ -113,7 +116,7 @@ export const api = {
   invalidate: () => cache.clear(),
 };
 
-// تنزيل ملف (Excel وغيره) مع احترام اسم الملف من السيرفر
+// تنزيل ملف (Excel وغيره) مع احترام اسم الملف من السيرفر. بيرجّع هيدرز الرد (مثلًا X-Images-Omitted في تصدير المنتجات)
 export async function download(path, fallbackName = "export.xlsx") {
   const res = await request(path, { raw: true });
   if (!res.ok) {
@@ -130,4 +133,5 @@ export async function download(path, fallbackName = "export.xlsx") {
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return res.headers;
 }

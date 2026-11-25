@@ -1,7 +1,7 @@
 // node --test frontend/tests  — اختبارات الدوال الخالصة في utils.js (من غير متصفح)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { safeNext, newIdempotencyKey, docStatus, num, money } from "../public/js/utils.js";
+import { safeNext, newIdempotencyKey, docStatus, num, money, historyKind, signedQty } from "../public/js/utils.js";
 
 test("safeNext accepts simple internal pages", () => {
   for (const ok of ["index.html", "stock-out.html", "invoice.html#kind=out&id=5", "movements.html?kind=out", "products.html?q=a%20b#x=1"]) {
@@ -58,4 +58,22 @@ test("wrapLines wraps on words and splits over-long words", () => {
   assert.deepEqual(word.map((l) => [...l].length), [28, 28, 14]);
   assert.deepEqual(wrapLines("", 10), [""]);
   assert.deepEqual(wrapLines("قصير", 28), ["قصير"]);
+});
+
+test("historyKind labels each movement type and marks reversals", () => {
+  assert.equal(historyKind({ kind: "in" }).label, "وارد");
+  assert.equal(historyKind({ kind: "stocktake" }).label, "جرد");
+  const rev = historyKind({ kind: "out", is_reversal: true });
+  assert.equal(rev.label, "إلغاء صادر");
+  assert.equal(rev.badge, "badge-bad");
+  assert.equal(historyKind({ kind: "unknown" }).label, "حركة");
+  assert.equal(historyKind(null).label, "حركة");
+});
+
+test("signedQty: sign follows the stock effect, transfers have none", () => {
+  assert.equal(signedQty({ kind: "in", delta: 5, quantity: 5 }), "+5");
+  assert.equal(signedQty({ kind: "out", delta: -3, quantity: 3 }), "−3");
+  assert.equal(signedQty({ kind: "transfer", delta: 0, quantity: 4 }), "4");
+  assert.equal(signedQty({ kind: "adjustment", delta: -2.5, quantity: 2.5 }), "−2.5");
+  assert.equal(signedQty(null), "");
 });

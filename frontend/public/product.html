@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex, nofollow">
+  <title>تفاصيل المنتج</title>
+  <link rel="icon" type="image/svg+xml" href="img/favicon.svg">
+  <link rel="preload" href="fonts/tajawal-arabic-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/tajawal-arabic-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <script src="js/theme-init.js"></script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+</head>
+<body>
+<noscript><p class="p-8 text-center">لازم تفعّل JavaScript عشان النظام يشتغل.</p></noscript>
+
+<div id="shell" data-perm="products.view" data-active="products" data-title="تفاصيل المنتج">
+  <div x-data="productPage" class="space-y-5">
+
+    <!-- ===== العودة + العنوان ===== -->
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <a href="products.html" class="btn btn-outline"><i class="fa-solid fa-arrow-right"></i>العودة للمنتجات</a>
+      <button type="button" class="btn btn-ghost btn-sm" @click="reload()" :disabled="loading"><i class="fa-solid fa-rotate" :class="loading && 'animate-spin'"></i>تحديث</button>
+    </div>
+
+    <div x-show="loading && !product" class="space-y-3"><div class="skeleton h-10"></div><div class="skeleton h-56"></div></div>
+    <div x-show="error" x-cloak class="card card-pad empty"><p class="mb-3 text-red-500" x-text="error"></p><a href="products.html" class="btn btn-outline btn-sm">رجوع لجدول المنتجات</a></div>
+
+    <template x-if="product">
+      <div class="space-y-5">
+        <div>
+          <h1 class="text-2xl font-bold" x-text="product.name"></h1>
+          <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            <span class="code-chip" x-show="product.sku" x-text="product.sku"></span>
+            <span class="code-chip" x-show="product.barcode"><i class="fa-solid fa-barcode"></i> <span x-text="product.barcode"></span></span>
+            <span class="badge" :class="statusOf(product).cls" x-text="statusOf(product).label"></span>
+          </div>
+        </div>
+
+        <div class="grid gap-5 lg:grid-cols-3">
+          <!-- ===== الصورة ===== -->
+          <section class="card card-pad lg:col-span-1">
+            <div class="flex aspect-square w-full items-center justify-center overflow-hidden rounded-2xl bg-soft">
+              <template x-if="product.image_url"><a :href="imgUrl(product.image_url)" target="_blank" rel="noopener" class="block h-full w-full"><img :src="imgUrl(product.image_url)" :alt="product.name" class="h-full w-full object-contain" decoding="async"></a></template>
+              <template x-if="!product.image_url"><div class="text-center text-muted"><i class="fa-regular fa-image text-5xl opacity-40"></i><p class="mt-2 text-sm">مفيش صورة للمنتج</p></div></template>
+            </div>
+            <div class="mt-3 flex flex-wrap items-center gap-2" x-show="canEdit" x-cloak>
+              <label class="btn btn-outline btn-sm cursor-pointer" :class="image.busy && 'pointer-events-none opacity-60'">
+                <i class="fa-solid fa-spinner animate-spin" x-show="image.busy"></i><i class="fa-solid fa-camera" x-show="!image.busy"></i>
+                <span x-text="product.image_url ? 'تغيير الصورة' : 'رفع صورة'"></span>
+                <input type="file" class="sr-only" accept="image/jpeg,image/png,image/webp" :disabled="image.busy" @change="pickImage($event.target.files[0]); $event.target.value = ''">
+              </label>
+              <button type="button" class="btn btn-ghost btn-sm text-red-600" x-show="product.image_url" @click="removeImage()" :disabled="image.busy"><i class="fa-solid fa-trash-can"></i>حذف الصورة</button>
+            </div>
+            <p class="field-err mt-2" x-show="image.error" x-text="image.error"></p>
+            <p class="mt-2 text-xs text-muted" x-show="canEdit" x-cloak>JPEG أو PNG أو WebP — بتتضغط تلقائيًا وبيتعمل لها نسخة مصغّرة لجدول المنتجات.</p>
+          </section>
+
+          <!-- ===== البيانات ===== -->
+          <section class="card card-pad lg:col-span-2">
+            <div class="grid grid-cols-2 gap-3 text-center sm:grid-cols-4">
+              <div class="rounded-xl bg-soft p-3"><div class="kpi-label">الكمية الفعلية</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="num(product.quantity)"></div></div>
+              <div class="rounded-xl bg-soft p-3"><div class="kpi-label">المحجوز</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="num(product.reserved)"></div></div>
+              <div class="rounded-xl bg-soft p-3"><div class="kpi-label">المتاح</div><div class="mt-1 text-xl font-bold tabular-nums text-brand-600" x-text="num(product.available)"></div></div>
+              <div class="rounded-xl bg-soft p-3"><div class="kpi-label">الحد الأدنى</div><div class="mt-1 text-xl font-bold tabular-nums" x-text="num(product.min_quantity)"></div></div>
+            </div>
+            <dl class="mt-5 grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+              <div class="flex justify-between gap-3 border-b border-line pb-2"><dt class="text-muted">التصنيف</dt><dd class="font-medium" x-text="product.category_name || '—'"></dd></div>
+              <div class="flex justify-between gap-3 border-b border-line pb-2"><dt class="text-muted">الماركة</dt><dd class="font-medium" x-text="product.brand_name || '—'"></dd></div>
+              <div class="flex justify-between gap-3 border-b border-line pb-2"><dt class="text-muted">وحدة القياس</dt><dd class="font-medium" x-text="product.unit || '—'"></dd></div>
+              <div class="flex justify-between gap-3 border-b border-line pb-2"><dt class="text-muted">السعر</dt><dd class="font-medium tabular-nums" x-text="money(product.price)"></dd></div>
+              <div class="flex justify-between gap-3 border-b border-line pb-2"><dt class="text-muted">SKU</dt><dd class="font-medium" dir="ltr" x-text="product.sku || '—'"></dd></div>
+              <div class="flex justify-between gap-3 border-b border-line pb-2"><dt class="text-muted">الباركود</dt><dd class="font-medium" dir="ltr" x-text="product.barcode || '—'"></dd></div>
+              <div class="flex justify-between gap-3 border-b border-line pb-2"><dt class="text-muted">تاريخ الإنشاء</dt><dd class="font-medium" x-text="product.created_at ? fmtDateTime(product.created_at) : '—'"></dd></div>
+              <div class="flex justify-between gap-3 border-b border-line pb-2"><dt class="text-muted">آخر تحديث</dt><dd class="font-medium" x-text="product.updated_at ? fmtDateTime(product.updated_at) : '—'"></dd></div>
+            </dl>
+          </section>
+        </div>
+
+        <!-- ===== توزيع المخزون ===== -->
+        <section class="card">
+          <div class="flex flex-wrap items-center justify-between gap-2 px-4 pt-4">
+            <h2 class="text-base font-bold">توزيع المخزون</h2>
+            <p class="text-sm text-muted">الإجمالي: <b class="tabular-nums text-fg" x-text="num(product.quantity)"></b> <span x-text="product.unit"></span></p>
+          </div>
+          <div class="overflow-x-auto px-3 pb-3 pt-2">
+            <table class="tbl" x-show="distributionRows.length || product.unassigned_quantity > 0">
+              <thead><tr><th>المخزن</th><th>الموقع</th><th>الكمية</th><th>المحجوز</th><th>المتاح</th></tr></thead>
+              <tbody>
+                <template x-for="r in distributionRows" :key="r.location_id">
+                  <tr>
+                    <td class="font-medium" x-text="r.groupLabel"></td>
+                    <td><loc-code :code="r.full_code"></loc-code></td>
+                    <td class="font-bold tabular-nums" x-text="num(r.quantity)"></td>
+                    <td class="tabular-nums text-amber-600" x-text="r.reserved > 0 ? num(r.reserved) : '—'"></td>
+                    <td class="tabular-nums" x-text="num(r.available)"></td>
+                  </tr>
+                </template>
+                <tr x-show="product.unassigned_quantity > 0">
+                  <td colspan="2" class="text-amber-600"><i class="fa-solid fa-triangle-exclamation"></i> كمية من غير مكان تخزين</td>
+                  <td class="font-bold tabular-nums" x-text="num(product.unassigned_quantity)"></td><td>—</td><td>—</td>
+                </tr>
+                <tr class="bg-soft font-bold">
+                  <td colspan="2">الإجمالي</td><td class="tabular-nums" x-text="num(distributionTotal)"></td>
+                  <td class="tabular-nums" x-text="num(product.reserved)"></td><td class="tabular-nums" x-text="num(product.available)"></td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="empty" x-show="!distributionRows.length && !(product.unassigned_quantity > 0)">المنتج ده مفيش له مخزون في أي مكان.</p>
+            <p class="mt-2 text-xs text-red-600" x-show="distributionMismatch" x-cloak><i class="fa-solid fa-triangle-exclamation"></i> مجموع الأماكن مش مطابق للإجمالي — راجع الجرد (python -m app.cli check-stock).</p>
+          </div>
+        </section>
+
+        <!-- ===== سجل الحركة ===== -->
+        <section class="card" x-show="canHistory" x-cloak>
+          <div class="px-4 pt-4">
+            <h2 class="text-base font-bold">سجل الحركة</h2>
+            <p class="mt-1 text-xs text-muted">كل الحركات اللي أثّرت على المنتج. النقل بيظهر في صف واحد ومبيغيّرش الإجمالي.</p>
+          </div>
+
+          <div class="grid gap-3 px-4 pt-3 sm:grid-cols-2 xl:grid-cols-6">
+            <select class="select" x-model="hf.kind" @change="applyHistory()" aria-label="نوع الحركة">
+              <option value="">كل الأنواع</option>
+              <template x-for="k in kindOptions" :key="k.key"><option :value="k.key" x-text="k.label"></option></template>
+            </select>
+            <template x-if="canLoc && whs.length">
+              <select class="select" :value="hf.warehouse_id || ''" @change="setWarehouse($event.target.value)" aria-label="المخزن">
+                <option value="">كل المخازن</option>
+                <template x-for="w in whs" :key="w.id"><option :value="w.id" :selected="hf.warehouse_id === w.id" x-text="w.name && w.name !== w.code ? w.code + ' — ' + w.name : w.code"></option></template>
+              </select>
+            </template>
+            <template x-for="(lv, i) in levels" :key="i + '-' + (i ? levels[i - 1].value : hf.warehouse_id)">
+              <select class="select" @change="setLevel(i, $event.target.value)" :aria-label="'مستوى الموقع ' + (i + 1)">
+                <option value="" :selected="!lv.value">كل المواقع</option>
+                <template x-for="o in lv.options" :key="o.id"><option :value="o.id" :selected="lv.value === o.id" x-text="o.label"></option></template>
+              </select>
+            </template>
+            <label class="flex items-center gap-2 text-sm"><span class="text-muted">من</span><input type="date" class="input" x-model="hf.date_from" @change="applyHistory()" aria-label="من تاريخ"></label>
+            <label class="flex items-center gap-2 text-sm"><span class="text-muted">إلى</span><input type="date" class="input" x-model="hf.date_to" @change="applyHistory()" aria-label="إلى تاريخ"></label>
+            <button type="button" class="btn btn-outline" @click="toggleOrder()"><i class="fa-solid" :class="hf.order === 'desc' ? 'fa-arrow-down-wide-short' : 'fa-arrow-up-wide-short'"></i><span x-text="hf.order === 'desc' ? 'الأحدث أولًا' : 'الأقدم أولًا'"></span></button>
+          </div>
+          <div class="flex flex-wrap items-center gap-4 px-4 pt-3 text-sm">
+            <label class="flex cursor-pointer items-center gap-2"><input type="checkbox" x-model="hf.include_voided" @change="applyHistory()"> إظهار الحركات الملغاة</label>
+            <button type="button" class="btn btn-ghost btn-sm" x-show="hasFilters" @click="resetHistory()"><i class="fa-solid fa-xmark"></i>مسح الفلاتر</button>
+          </div>
+
+          <div class="flex flex-wrap gap-2 px-4 pt-3 text-xs" x-show="hist.total" x-cloak>
+            <span class="badge badge-ok">وارد: <b class="tabular-nums" x-text="num(hist.summary.in_quantity)"></b></span>
+            <span class="badge bg-orange-500/10 text-orange-700 dark:text-orange-300">صادر: <b class="tabular-nums" x-text="num(hist.summary.out_quantity)"></b></span>
+            <span class="badge badge-info">منقول: <b class="tabular-nums" x-text="num(hist.summary.transfers_quantity)"></b></span>
+            <span class="badge badge-warn" x-show="hist.summary.adjustments_net">تعديلات/جرد: <b class="tabular-nums" dir="ltr" x-text="num(hist.summary.adjustments_net)"></b></span>
+            <span class="badge badge-mute">صافي التغيير: <b class="tabular-nums" dir="ltr" x-text="num(hist.summary.net_change)"></b></span>
+          </div>
+          <p class="px-4 pt-2 text-xs text-muted" x-show="hist.balances_available && hist.opening_balance" x-cloak>
+            رصيد قبل أول حركة مسجّلة: <b class="tabular-nums" x-text="num(hist.opening_balance)"></b> (كمية اتسجّلت من غير إذن إضافة، مثلًا عند إنشاء المنتج).
+          </p>
+
+          <div class="overflow-x-auto px-3 pt-3">
+            <table class="tbl" x-show="hist.items.length">
+              <thead><tr>
+                <th>التاريخ</th><th>النوع</th><th>الكمية</th><th>المكان</th>
+                <th x-show="hist.balances_available">الرصيد (قبل ← بعد)</th><th>المستند</th><th>الجهة / المستخدم</th><th>ملاحظات</th>
+              </tr></thead>
+              <tbody>
+                <template x-for="m in hist.items" :key="m.key">
+                  <tr :class="[loadingHist && 'opacity-60', m.voided && 'text-muted']">
+                    <td class="whitespace-nowrap text-muted" x-text="fmtDateTime(m.date)"></td>
+                    <td><span class="badge" :class="kindOf(m).badge"><i class="fa-solid" :class="kindOf(m).icon"></i> <span x-text="kindOf(m).label"></span></span>
+                      <span class="badge badge-mute" x-show="m.voided && !m.is_reversal">ملغي</span></td>
+                    <td class="whitespace-nowrap font-bold tabular-nums" :class="m.delta > 0 ? 'text-brand-600' : m.delta < 0 ? 'text-orange-600' : ''" dir="ltr" x-text="signed(m)"></td>
+                    <td>
+                      <template x-if="m.kind === 'transfer'"><div class="flex flex-wrap items-center gap-1"><loc-code :code="m.from ? m.from.code : ''"></loc-code><i class="fa-solid fa-arrow-left text-xs text-muted"></i><loc-code :code="m.to ? m.to.code : ''"></loc-code></div></template>
+                      <template x-if="m.kind !== 'transfer'"><div><loc-code x-show="m.location" :code="m.location ? m.location.code : ''"></loc-code><span x-show="!m.location" class="text-xs text-muted">—</span></div></template>
+                    </td>
+                    <td class="whitespace-nowrap tabular-nums" x-show="hist.balances_available"><span x-text="num(m.balance_before)"></span> <i class="fa-solid fa-arrow-left text-[10px] text-muted"></i> <b x-text="num(m.balance_after)"></b></td>
+                    <td>
+                      <a x-show="m.document_id && (m.kind === 'in' || m.kind === 'out')" :href="'invoice.html#kind=' + m.kind + '&id=' + m.document_id" class="font-medium text-brand-600 hover:underline" x-text="'#' + m.document_id"></a>
+                      <a x-show="m.stocktake_id" :href="'stocktake.html#id=' + m.stocktake_id" class="font-medium text-brand-600 hover:underline" x-text="'جرد #' + m.stocktake_id"></a>
+                      <span x-show="!m.document_id && !m.stocktake_id" class="text-muted">—</span>
+                    </td>
+                    <td><div x-text="m.party_name || '—'"></div><div class="text-xs text-muted" x-text="m.user_name || ''"></div></td>
+                    <td class="max-w-[16rem] whitespace-normal text-xs text-muted"><span x-text="m.is_reversal && m.void_reason ? 'سبب الإلغاء: ' + m.void_reason : (m.notes || '')"></span></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <div x-show="loadingHist && !hist.items.length" class="space-y-2 py-3"><div class="skeleton h-8"></div><div class="skeleton h-8"></div><div class="skeleton h-8"></div></div>
+            <p class="empty" x-show="!loadingHist && !hist.items.length && !histError">مفيش حركات مطابقة.</p>
+            <div class="empty" x-show="histError" x-cloak><p class="mb-3 text-red-500" x-text="histError"></p><button type="button" class="btn btn-outline btn-sm" @click="loadHistory()">إعادة المحاولة</button></div>
+          </div>
+          <div class="border-t border-line px-4"><ui-pager :page="hist.page" :pages="hist.total_pages" :total="hist.total" :size="hf.size" @go="goHistory($event.detail)"></ui-pager></div>
+        </section>
+      </div>
+    </template>
+
+  </div>
+</div>
+
+<script type="module" src="js/layout.js"></script>
+<script type="module" src="js/product.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
+</body>
+</html>

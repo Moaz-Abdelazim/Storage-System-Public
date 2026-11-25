@@ -1,7 +1,7 @@
 // =====================================================================
 //  products.js — صفحة المنتجات (ترقيم وفلترة وترتيب من السيرفر).
 // =====================================================================
-import { api, qs, download } from "./api.js";
+import { api, apiUrl, qs, download } from "./api.js";
 import { can } from "./auth.js";
 import { invalidateData } from "./data.js";
 import { num, money, fmtDateTime, toast, errMsg, productStatus, confirmAction, getQuery, setQuery } from "./utils.js";
@@ -16,7 +16,7 @@ const blankForm = () => ({
 document.addEventListener("alpine:init", () => {
   window.Alpine.data("products", () => ({
     canCreate: can("products.create"), canEdit: can("products.edit"), canPrice: can("products.price"), canAdjust: can("products.adjust"),
-    canToggle: can("products.toggle"), canMovements: can("invoices.view"), canFinance: can("finance.view"),
+    canToggle: can("products.toggle"), canFinance: can("finance.view"),
     rows: [], total: 0, page: 1, pages: 1, size: 25,
     loading: true, error: "", exporting: false,
     filters: { search: getQuery("search"), category_id: Number(getQuery("category_id")) || null, brand_id: Number(getQuery("brand_id")) || null, stock: getQuery("stock") || "", status: "active", sort: "name", order: "asc",
@@ -27,9 +27,8 @@ document.addEventListener("alpine:init", () => {
     stockTabs: [{ key: "", label: "الكل" }, { key: "ok", label: "متوفر" }, { key: "low", label: "تحت الحد" }, { key: "out", label: "نفد" }],
     form: blankForm(),
     loc: { open: false, saving: false, error: "", product: null, rows: [], reason: "" },
-    detail: { open: false, loading: false, tab: "locations", product: null, mv: { items: [], page: 1, total_pages: 1, total: 0, page_size: 8 } },
 
-    num, money, fmtDateTime,
+    num, money, fmtDateTime, imgUrl: apiUrl,
     statusOf: productStatus,
 
     init() {
@@ -114,7 +113,11 @@ document.addEventListener("alpine:init", () => {
 
     async exportExcel() {
       this.exporting = true;
-      try { await download("/api/excel/products/export", "products.xlsx"); } catch (e) { toast(errMsg(e), "error"); }
+      try {
+        const h = await download("/api/excel/products/export", "products.xlsx");
+        const omitted = Number(h && h.get("X-Images-Omitted")) || 0;
+        if (omitted) toast(`${omitted} صورة مش متضمنة في الملف (السقف الأقصى للصور في التصدير أو ملف صورة ناقص)`, "error");
+      } catch (e) { toast(errMsg(e), "error"); }
       this.exporting = false;
     },
 
@@ -175,18 +178,12 @@ document.addEventListener("alpine:init", () => {
       l.saving = false;
     },
 
-    // ---------- التفاصيل (حركات المنتج بترقيم من السيرفر) ----------
-    openDetail(p) {
-      this.detail = { open: true, loading: false, tab: "locations", product: p, mv: { items: [], page: 1, total_pages: 1, total: 0, page_size: 8 } };
-    },
-    async loadMovements(kind, page = 1) {
-      const d = this.detail;
-      d.tab = kind; d.loading = true;
-      try {
-        const r = await api.get(`/api/products/${d.product.id}/movements${qs({ kind, page, page_size: d.mv.page_size })}`);
-        d.mv = r;
-      } catch (e) { toast(errMsg(e), "error"); }
-      d.loading = false;
+    // ---------- صفحة التفاصيل ----------
+    pageUrl(p) { return `product.html#id=${p.id}`; },
+    // الضغط على الصف يفتح صفحة التفاصيل (إلا لو الضغطة على زرار/رابط/حقل جوه الصف)
+    rowClick(p, ev) {
+      if (ev.target.closest("a, button, input, select, label")) return;
+      location.href = this.pageUrl(p);
     },
 
     // ---------- تفعيل / تعطيل (أدمن) ----------

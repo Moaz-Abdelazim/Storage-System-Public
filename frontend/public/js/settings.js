@@ -1,5 +1,5 @@
 // settings.js — الحساب والمظهر وتغيير كلمة المرور وتصدير/استيراد Excel
-import { api, download } from "./api.js";
+import { api, download, qs } from "./api.js";
 import { getUser, can } from "./auth.js";
 import { invalidateData } from "./data.js";
 import { toast, errMsg, confirmAction } from "./utils.js";
@@ -18,7 +18,7 @@ document.addEventListener("alpine:init", () => {
     // بيانات الشركة (للأدمن): الاسم + رقمين + اللوجو. بتظهر في المستندات المطبوعة
     publicUrl: { value: "", source: "none", saving: false, error: "" },
     company: { name: "", phone1: "", phone2: "", has_logo: false, logo_version: null, saving: false, error: "", logoBusy: false },
-    busy: "", file: null, drag: false, importing: false, result: null,
+    busy: "", file: null, drag: false, importing: false, result: null, replaceImages: false,
     exports: [
       { path: "/api/excel/products/export", name: "products.xlsx", label: "المنتجات", sub: "كل المنتجات وكمياتها", icon: "fa-boxes-stacked", perm: "products.export" },
       { path: "/api/excel/products/template", name: "products-template.xlsx", label: "قالب الاستيراد", sub: "ملف فاضي بالأعمدة المطلوبة", icon: "fa-table", perm: "products.import" },
@@ -143,9 +143,12 @@ document.addEventListener("alpine:init", () => {
       const fd = new FormData();
       fd.append("file", this.file);
       try {
-        const r = await api.upload("/api/excel/products/import", fd);
-        this.result = { created: r.created || 0, updated: r.updated || 0, errors: r.errors || [], errors_total: r.errors_total ?? (r.errors || []).length, truncated: !!r.errors_truncated };
-        toast(r.message || "تم الاستيراد", this.result.errors_total ? "error" : "success");
+        const r = await api.upload(`/api/excel/products/import${qs({ replace_images: this.replaceImages ? 1 : "" })}`, fd);
+        this.result = {
+          created: r.created || 0, updated: r.updated || 0, errors: r.errors || [], errors_total: r.errors_total ?? (r.errors || []).length, truncated: !!r.errors_truncated,
+          images_saved: r.images_saved || 0, images_skipped: r.images_skipped_existing || 0, image_errors: r.image_errors || [], image_errors_total: r.image_errors_total || 0, image_truncated: !!r.image_errors_truncated,
+        };
+        toast(r.message || "تم الاستيراد", this.result.errors_total || this.result.image_errors_total ? "error" : "success");
         this.file = null; invalidateData();
       } catch (e) { toast(errMsg(e), "error"); }
       this.importing = false;

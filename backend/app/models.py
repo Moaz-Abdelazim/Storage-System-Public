@@ -161,6 +161,8 @@ class Product(Base):
     min_quantity = Column(Qty(), nullable=False, default=0.0, server_default="0")  # حد أدنى للتنبيه
     # المنتجات ما بتتحذفش - بتتعطّل (is_active=False) فتختفي من القوايم والفواتير الجديدة وسجلها يفضل محفوظ
     is_active = Column(Boolean, nullable=False, default=True, server_default="1", index=True)
+    # مفتاح صورة المنتج في مخزن الوسائط (services/media_store.py). NULL = مفيش صورة. بيتغيّر مع كل صورة جديدة (فالـ URL والكاش بيتحدّثوا لوحدهم)
+    image_key = Column(String(32), nullable=True)
     created_at = Column(DateTime, default=now_cairo)
     updated_at = Column(DateTime, default=now_cairo, onupdate=now_cairo)
 

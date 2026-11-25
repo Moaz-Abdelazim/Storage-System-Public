@@ -28,7 +28,7 @@ def test_ready_requires_migrated_schema(engine, anon, monkeypatch):
     with engine.begin() as conn:
         conn.execute(text("CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) NOT NULL)"))
         conn.execute(text("DELETE FROM alembic_version"))
-        conn.execute(text("INSERT INTO alembic_version VALUES ('0002')"))
+        conn.execute(text("INSERT INTO alembic_version VALUES ('0003')"))
     assert anon.get("/api/ready").json() == {"status": "ready"}
     with engine.begin() as conn:
         conn.execute(text("UPDATE alembic_version SET version_num='old'"))

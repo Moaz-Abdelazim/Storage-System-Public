@@ -247,6 +247,10 @@ class ProductLocationIn(BaseModel):
 class ProductLocationOut(BaseModel):
     location_id: int
     full_code: str
+    warehouse_id: Optional[int] = None
+    warehouse_code: Optional[str] = None
+    warehouse_name: Optional[str] = None
+    location_name: Optional[str] = None
     quantity: float            # on_hand: الفعلي في المكان
     reserved: float = 0.0      # محجوز لإذونات صرف حالتها reserved
     available: float = 0.0     # الفعلي - المحجوز
@@ -318,8 +322,12 @@ class ProductOut(BaseModel):
     reserved: float = 0.0      # إجمالي المحجوز
     available: float = 0.0     # on_hand - reserved
     min_quantity: float
+    created_at: Optional[datetime] = None
     updated_at: datetime
     is_active: bool = True
+    has_image: bool = False
+    image_url: Optional[str] = None    # الصورة الأساسية (صفحة التفاصيل) - مسار نسبي بيتحمّل من نفس الـ API بالكوكي
+    thumb_url: Optional[str] = None    # Thumbnail صغيرة (جدول المنتجات)
     locations: List[ProductLocationOut] = []
     unassigned_quantity: float = 0.0   # الجزء من الكمية الإجمالية اللي مش متحدد له موقع
     scoped_quantity: Optional[float] = None  # الكمية جوه الموقع المفلتر عليه (لو فيه فلتر)

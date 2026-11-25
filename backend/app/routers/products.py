@@ -30,6 +30,22 @@ def db_of(p):
     return object_session(p)
 
 
+def _image_url(p: models.Product, size: str) -> Optional[str]:
+    """مسار الصورة (بيتضاف له v=<key> عشان الكاش يتحدّث لوحده لما الصورة تتغيّر)."""
+    return f"/api/products/{p.id}/image?size={size}&v={p.image_key}" if p.image_key else None
+
+
+def _location_out(idx: LocationIndex, pl: models.ProductLocation) -> schemas.ProductLocationOut:
+    loc = idx.locations.get(pl.location_id)
+    wh = idx.warehouses.get(loc.warehouse_id) if loc is not None else None
+    return schemas.ProductLocationOut(
+        location_id=pl.location_id, full_code=idx.full_code(pl.location_id), quantity=pl.quantity,
+        warehouse_id=wh.id if wh else None, warehouse_code=wh.code if wh else None,
+        warehouse_name=wh.name if wh else None, location_name=loc.name if loc is not None else None,
+        reserved=_round_qty(pl.reserved or 0), available=_round_qty(pl.quantity - (pl.reserved or 0)),
+    )
+
+
 def _to_out(p: models.Product, idx: Optional[LocationIndex] = None, scope_ids=None) -> schemas.ProductOut:
     """idx: فهرس المواقع (بيتحمّل مرة واحدة للقايمة كلها). scope_ids: نطاق فلتر الموقع لو فيه."""
     if idx is None:
@@ -52,13 +68,14 @@ def _to_out(p: models.Product, idx: Optional[LocationIndex] = None, scope_ids=No
         reserved=reserved_total,
         available=_round_qty((p.quantity or 0) - reserved_total),
         min_quantity=p.min_quantity,
+        created_at=p.created_at,
         updated_at=p.updated_at,
         is_active=bool(p.is_active) if p.is_active is not None else True,
+        has_image=bool(p.image_key),
+        image_url=_image_url(p, "main"),
+        thumb_url=_image_url(p, "thumb"),
         locations=[
-            schemas.ProductLocationOut(
-                location_id=pl.location_id, full_code=idx.full_code(pl.location_id), quantity=pl.quantity,
-                reserved=_round_qty(pl.reserved or 0), available=_round_qty(pl.quantity - (pl.reserved or 0)),
-            )
+            _location_out(idx, pl)
             for pl in locs
         ],
         unassigned_quantity=max(0.0, _round_qty((p.quantity or 0) - assigned)),
